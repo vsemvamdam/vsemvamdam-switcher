@@ -375,11 +375,14 @@ static bool xml_tag(const std::string& xml, const std::string& tag, std::string&
 
 bool parse_profile_xml(const std::string& xml, ProfileInfo& out) {
     out = ProfileInfo{};
-    std::string v;
-    if (xml_tag(xml, "privacyMessage", v) && !v.empty()) { out.ok = true; out.is_private = true; return true; }
-    std::string id;
-    if (!xml_tag(xml, "steamID64", id) || id.empty()) return false;
+    std::string v, id;
+    bool priv_msg = xml_tag(xml, "privacyMessage", v) && !v.empty();
+    if (!xml_tag(xml, "steamID64", id) || id.empty()) {
+        if (priv_msg) { out.ok = true; out.is_private = true; return true; }
+        return false;
+    }
     out.ok = true;
+    out.is_private = priv_msg;
     if (xml_tag(xml, "steamID", v)) out.persona = v;
     if (xml_tag(xml, "avatarFull", v)) out.avatar_full = v;
     if (xml_tag(xml, "vacBanned", v)) out.vac = v == "1";

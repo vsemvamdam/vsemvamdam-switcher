@@ -508,11 +508,18 @@ void App::draw_grid(const std::vector<Account>& list, float avail) {
                 note = store_.meta[cur_][a.id].note;
             }
             if (!note.empty() && ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal)) {
+                ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(S(12), S(9)));
+                ImGui::PushStyleVar(ImGuiStyleVar_PopupRounding, S(10));
+                ImGui::PushStyleColor(ImGuiCol_PopupBg, P.accent);
+                ImGui::PushStyleColor(ImGuiCol_Text, P.accent_text);
+                ImGui::PushStyleColor(ImGuiCol_Border, P.accent);
                 ImGui::BeginTooltip();
                 ImGui::PushTextWrapPos(S(280));
                 ImGui::TextUnformatted(note.c_str());
                 ImGui::PopTextWrapPos();
                 ImGui::EndTooltip();
+                ImGui::PopStyleColor(3);
+                ImGui::PopStyleVar(2);
             }
         }
     }
