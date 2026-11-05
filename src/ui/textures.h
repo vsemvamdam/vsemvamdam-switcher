@@ -13,7 +13,7 @@ ImTextureID tex_file(const std::string& path, int px, float round = 0.0f);
 // Icon from an executable (or .ico/.dll); 0 while loading.
 ImTextureID tex_exe_icon(const std::string& exe, int px);
 // Placeholder tile texture by seed
-ImTextureID tex_placeholder(unsigned seed, int px, float round);
+ImTextureID tex_placeholder(unsigned seed, int px, float round, bool dark = false);
 void tex_pump();           // UI thread: upload finished decodes
 void tex_clear();          // drop everything (e.g. after refresh)
 void tex_forget(const std::string& path);

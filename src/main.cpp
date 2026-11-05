@@ -49,7 +49,7 @@ UINT g_resize_w = 0, g_resize_h = 0;
 bool g_hidden = false;
 bool g_minimized = false;
 bool g_quitting = false;
-bool g_dark_titlebar = false;
+bool g_dark_titlebar = true;
 float g_dpi_scale = 1.0f;
 bool g_dpi_changed = false;
 UINT g_taskbar_created = 0;
@@ -356,6 +356,7 @@ int WINAPI wWinMain(HINSTANCE hinst, HINSTANCE, PWSTR, int nShow) {
     wc.hIcon = LoadIconW(hinst, MAKEINTRESOURCEW(1));
     wc.hIconSm = (HICON)LoadImageW(hinst, MAKEINTRESOURCEW(1), IMAGE_ICON, GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), 0);
     wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+    wc.hbrBackground = CreateSolidBrush(RGB(20, 20, 22));
     wc.lpszClassName = kWndClass;
     RegisterClassExW(&wc);
 

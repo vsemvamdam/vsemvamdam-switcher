@@ -147,10 +147,11 @@ std::vector<uint8_t> make_ico(int w, int h, const std::vector<uint8_t>& rgba) {
     return f;
 }
 
-Image placeholder(uint32_t seed, int size) {
-    // Soft two-tone tile in a calm palette
+Image placeholder(uint32_t seed, int size, bool dark) {
+    // Soft tile in a calm palette (muted, darker variant for the dark theme)
     static const uint32_t pal[] = {0xD9CFC1, 0xC9D3CC, 0xCAD2DB, 0xDACBCF, 0xD6D3C4, 0xC8C9D6, 0xD3C6BA, 0xBFCFC9};
-    uint32_t c = pal[seed % (sizeof(pal) / sizeof(pal[0]))];
+    static const uint32_t pal_dark[] = {0x3B3631, 0x313833, 0x30363D, 0x3A3135, 0x37352E, 0x323340, 0x3A3029, 0x2E3835};
+    uint32_t c = dark ? pal_dark[seed % 8] : pal[seed % (sizeof(pal) / sizeof(pal[0]))];
     Image im;
     im.w = im.h = size;
     im.rgba.resize((size_t)size * size * 4);

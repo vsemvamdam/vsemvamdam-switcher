@@ -20,7 +20,7 @@ static void rd(const json& j, const char* k, T& v) {
 }
 
 static const char* theme_s(Theme t) { return t == Theme::Dark ? "dark" : t == Theme::System ? "system" : "light"; }
-static Theme theme_p(const std::string& s) { return s == "dark" ? Theme::Dark : s == "system" ? Theme::System : Theme::Light; }
+static Theme theme_p(const std::string& s) { return s == "light" ? Theme::Light : s == "system" ? Theme::System : Theme::Dark; }
 static const char* after_s(AfterSwitch a) {
     switch (a) { case AfterSwitch::Nothing: return "nothing"; case AfterSwitch::Tray: return "tray"; case AfterSwitch::Quit: return "quit"; default: return "minimize"; }
 }

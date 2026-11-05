@@ -87,9 +87,9 @@ void App::draw_settings_general() {
 
     setting_row_begin(TR("Тема", "Theme"), nullptr, cw);
     {
-        int v = (int)s.theme == 0 ? 2 : (int)s.theme - 1;  // Light, Dark, System
-        const char* it[] = {TR("Светлая", "Light"), TR("Тёмная", "Dark"), TR("Как в Windows", "System")};
-        if (combo_row("##theme", &v, it, 3, cw)) { s.theme = v == 0 ? Theme::Light : v == 1 ? Theme::Dark : Theme::System; dirty = true; }
+        int v = s.theme == Theme::Dark ? 0 : s.theme == Theme::Light ? 1 : 2;  // Dark, Light, System
+        const char* it[] = {TR("Тёмная", "Dark"), TR("Светлая", "Light"), TR("Как в Windows", "System")};
+        if (combo_row("##theme", &v, it, 3, cw)) { s.theme = v == 0 ? Theme::Dark : v == 1 ? Theme::Light : Theme::System; dirty = true; }
     }
     setting_row_end();
 

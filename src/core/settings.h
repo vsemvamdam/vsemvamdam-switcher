@@ -21,7 +21,7 @@ struct PlatformPrefs {
 
 struct Settings {
     std::string language = "ru";
-    Theme theme = Theme::Light;
+    Theme theme = Theme::Dark;
     bool close_to_tray = true;
     bool start_minimized = false;
     bool run_at_startup = false;

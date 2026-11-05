@@ -55,13 +55,13 @@ static void draw_avatar(ImDrawList* dl, const std::string& path, const std::stri
     if (t) {
         dl->AddImage(ImTextureRef(t), a, b);
     } else {
-        ImTextureID ph = tex_placeholder(seed_of(id), 96, round_frac);
+        ImTextureID ph = tex_placeholder(seed_of(id), 96, round_frac, g_dark);
         if (ph) dl->AddImage(ImTextureRef(ph), a, b);
         else dl->AddRectFilled(a, b, P.accent_soft, size * round_frac);
         std::string ini = initials(name);
         float fs = size * 0.42f;
         ImVec2 ts = F_SEMI->CalcTextSizeA(fs, FLT_MAX, 0, ini.c_str());
-        dl->AddText(F_SEMI, fs, ImVec2(a.x + (size - ts.x) * 0.5f, a.y + (size - ts.y) * 0.5f), with_alpha(IM_COL32(23, 23, 26, 255), 0.55f), ini.c_str());
+        dl->AddText(F_SEMI, fs, ImVec2(a.x + (size - ts.x) * 0.5f, a.y + (size - ts.y) * 0.5f), g_dark ? with_alpha(IM_COL32(237, 235, 231, 255), 0.62f) : with_alpha(IM_COL32(23, 23, 26, 255), 0.55f), ini.c_str());
     }
 }
 

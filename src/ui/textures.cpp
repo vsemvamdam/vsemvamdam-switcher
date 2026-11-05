@@ -31,6 +31,7 @@ struct Job {
     bool exe;
     unsigned seed;
     bool placeholder;
+    bool dark = false;
 };
 
 struct Done {
@@ -59,7 +60,7 @@ void worker() {
         }
         img::Image im;
         if (j.placeholder) {
-            im = img::placeholder(j.seed, j.px);
+            im = img::placeholder(j.seed, j.px, j.dark);
         } else if (j.exe) {
             int w = 0, h = 0;
             std::vector<uint8_t> rgba;
@@ -159,11 +160,13 @@ ImTextureID tex_exe_icon(const std::string& exe, int px) {
     return request(key, Job{key, exe, px, 0.0f, true, 0, false}, 0);
 }
 
-ImTextureID tex_placeholder(unsigned seed, int px, float round) {
-    std::string key = "p|" + std::to_string(seed % 8) + "|" + std::to_string(px) + "|" + std::to_string((int)(round * 100));
+ImTextureID tex_placeholder(unsigned seed, int px, float round, bool dark) {
+    std::string key = std::string("p|") + (dark ? "d" : "l") + std::to_string(seed % 8) + "|" + std::to_string(px) + "|" + std::to_string((int)(round * 100));
     auto it = g_cache.find(key);
     if (it != g_cache.end()) return (ImTextureID)it->second.srv;
-    return request(key, Job{key, "", px, round, false, seed, true}, 0);
+    Job j{key, "", px, round, false, seed, true};
+    j.dark = dark;
+    return request(key, j, 0);
 }
 
 void tex_pump() {

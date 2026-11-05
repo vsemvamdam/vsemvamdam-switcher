@@ -20,6 +20,6 @@ void round_corners(Image& im, float radius_frac);    // alpha mask, radius as fr
 std::vector<uint8_t> encode_png(const Image& im);
 std::vector<uint8_t> make_ico(int w, int h, const std::vector<uint8_t>& rgba);  // sizes 256,64,48,32,16 (PNG entries)
 // Monogram placeholder avatar: colored square with initial letters drawn as blocky glyph-free circle pattern.
-Image placeholder(uint32_t seed, int size);
+Image placeholder(uint32_t seed, int size, bool dark = false);
 
 }  // namespace vs::img
