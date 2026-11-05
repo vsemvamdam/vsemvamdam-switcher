@@ -53,12 +53,6 @@ make test       # юнит-тесты ядра (VDF, loginusers, статус, �
 make wintest    # интеграционный тест с фейковыми Steam и клиентом: wine build/wintest.exe
 ```
 
-### Релиз
-
-GitHub Actions собирает exe и гоняет тесты на каждый push; интеграционные тесты идут на настоящей Windows.
-
-Чтобы выпустить версию, поднимите `VS_VER_STRING` (и `VS_VER_*`) в `src/version.h` и запушьте в `main`. Если релиза с такой версией ещё нет, Actions сам создаст тег `vX.Y.Z` и релиз с `vsemvamdam-switcher.exe`, zip и `SHA256SUMS.txt`. Пуш без смены версии релиз не трогает. Можно и вручную: `git push origin vX.Y.Z` (тег должен совпадать с версией в `version.h`).
-
 ## Лицензия
 
 GPL-3.0. Механика переключения и описания платформ основаны на открытом [TcNo Account Switcher](https://github.com/TCNOco/TcNo-Acc-Switcher) (GPL-3.0). Шрифты Inter (OFL) и Lucide (ISC), интерфейс — Dear ImGui (MIT), JSON — nlohmann/json (MIT), stb (MIT/PD).
