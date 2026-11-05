@@ -55,10 +55,9 @@ make wintest    # интеграционный тест с фейковыми St
 
 ### Релиз
 
-GitHub Actions собирает exe и гоняет тесты на каждый push; интеграционные тесты идут на настоящей Windows. Чтобы выпустить версию:
+GitHub Actions собирает exe и гоняет тесты на каждый push; интеграционные тесты идут на настоящей Windows.
 
-1. Поднять `VS_VER_STRING` (и `VS_VER_*`) в `src/version.h`, закоммитить.
-2. `git tag v1.0.1 && git push origin v1.0.1` — релиз с `vsemvamdam-switcher.exe`, zip и `SHA256SUMS.txt` появится в Releases сам. Если тег не совпадает с версией в `version.h`, сборка остановится с ошибкой.
+Чтобы выпустить версию, поднимите `VS_VER_STRING` (и `VS_VER_*`) в `src/version.h` и запушьте в `main`. Если релиза с такой версией ещё нет, Actions сам создаст тег `vX.Y.Z` и релиз с `vsemvamdam-switcher.exe`, zip и `SHA256SUMS.txt`. Пуш без смены версии релиз не трогает. Можно и вручную: `git push origin vX.Y.Z` (тег должен совпадать с версией в `version.h`).
 
 ## Лицензия
 

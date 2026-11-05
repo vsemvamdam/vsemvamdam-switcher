@@ -1,5 +1,7 @@
-# Builds vsemvamdam-switcher on every push / PR, runs the tests,
-# and publishes a GitHub Release with the .exe when a tag like v1.2.3 is pushed.
+# Builds vsemvamdam-switcher on every push / PR and runs the tests.
+# Publishes a GitHub Release with the .exe:
+#   - on a push to main when src/version.h has a version that has no release yet (tag is created automatically), or
+#   - when a tag like v1.2.3 is pushed.
 name: build
 
 on:
@@ -21,8 +23,14 @@ jobs:
     name: Build (MinGW-w64) + unit tests
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: Read version
+        id: ver
+        run: echo "version=$(sed -n 's/.*VS_VER_STRING "\(.*\)".*/\1/p' src/version.h)" >> "$GITHUB_OUTPUT"
 
       - name: Install toolchain
         run: |
@@ -96,7 +104,7 @@ jobs:
 
   release:
     name: Publish GitHub Release
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: github.event_name == 'push' && (startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main')
     needs: [build, windows-tests]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -112,8 +120,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          TAG: ${{ github.ref_name }}
+          VERSION: ${{ needs.build.outputs.version }}
         run: |
+          if [ -z "$VERSION" ]; then echo "::error::VS_VER_STRING not found in src/version.h"; exit 1; fi
+          TAG="v$VERSION"
           cat > notes.md <<'EOF'
           **Скачать:** `vsemvamdam-switcher.exe` — один файл, установка не нужна.
 
@@ -121,7 +131,14 @@ jobs:
           Контрольные суммы — в `SHA256SUMS.txt`.
           EOF
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" dist/* --clobber
+            if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+              gh release upload "$TAG" dist/* --clobber
+              echo "Updated assets of $TAG"
+            else
+              echo "Release $TAG already exists — bump VS_VER_STRING in src/version.h to publish a new one."
+            fi
           else
-            gh release create "$TAG" dist/* --title "vsemvamdam switcher ${TAG#v}" --notes-file notes.md --generate-notes
+            gh release create "$TAG" dist/* --target "$GITHUB_SHA" --title "vsemvamdam switcher $VERSION" \
+              --notes-file notes.md --generate-notes
+            echo "Published $TAG"
           fi
