@@ -1,6 +1,10 @@
 # vsemvamdam switcher
 
+[![build](https://github.com/vsemvamdam/vsemvamdam-switcher/actions/workflows/build.yml/badge.svg)](https://github.com/vsemvamdam/vsemvamdam-switcher/actions/workflows/build.yml)
+
 Быстрый переключатель аккаунтов для Windows: Steam, Epic Games, Battle.net, Riot, Ubisoft Connect, Discord, EA app и другие.
+
+**Скачать:** [последний релиз](https://github.com/vsemvamdam/vsemvamdam-switcher/releases/latest) → `vsemvamdam-switcher.exe`.
 
 Один `.exe` на ~3 МБ, нативный интерфейс на Direct3D 11 (Dear ImGui) — без Chromium/WebView, стартует мгновенно и не грузит систему в фоне: кадры рисуются только когда что-то меняется.
 
@@ -48,6 +52,13 @@ make            # build/vsemvamdam-switcher.exe
 make test       # юнит-тесты ядра (VDF, loginusers, статус, движок платформ)
 make wintest    # интеграционный тест с фейковыми Steam и клиентом: wine build/wintest.exe
 ```
+
+### Релиз
+
+GitHub Actions собирает exe и гоняет тесты на каждый push; интеграционные тесты идут на настоящей Windows. Чтобы выпустить версию:
+
+1. Поднять `VS_VER_STRING` (и `VS_VER_*`) в `src/version.h`, закоммитить.
+2. `git tag v1.0.1 && git push origin v1.0.1` — релиз с `vsemvamdam-switcher.exe`, zip и `SHA256SUMS.txt` появится в Releases сам. Если тег не совпадает с версией в `version.h`, сборка остановится с ошибкой.
 
 ## Лицензия
 

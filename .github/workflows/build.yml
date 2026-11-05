@@ -1,0 +1,127 @@
+# Builds vsemvamdam-switcher on every push / PR, runs the tests,
+# and publishes a GitHub Release with the .exe when a tag like v1.2.3 is pushed.
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+jobs:
+  build:
+    name: Build (MinGW-w64) + unit tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q mingw-w64 zip
+
+      - name: Check tag matches src/version.h
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          VER=$(sed -n 's/.*VS_VER_STRING "\(.*\)".*/\1/p' src/version.h)
+          TAG="${GITHUB_REF_NAME#v}"
+          echo "version.h: $VER, tag: $TAG"
+          if [ "$VER" != "$TAG" ]; then
+            echo "::error::Tag v$TAG does not match VS_VER_STRING $VER in src/version.h"
+            exit 1
+          fi
+
+      - name: Unit tests
+        run: make test
+
+      - name: Build exe
+        run: make -j"$(nproc)"
+
+      - name: Build Windows integration tests
+        run: make wintest
+
+      - name: Package
+        run: |
+          VER=$(sed -n 's/.*VS_VER_STRING "\(.*\)".*/\1/p' src/version.h)
+          mkdir -p dist pkg
+          cp build/vsemvamdam-switcher.exe dist/
+          cp build/vsemvamdam-switcher.exe README.md LICENSE pkg/
+          (cd pkg && zip -q -9 "../dist/vsemvamdam-switcher-$VER-win64.zip" vsemvamdam-switcher.exe README.md LICENSE)
+          (cd dist && sha256sum vsemvamdam-switcher.exe "vsemvamdam-switcher-$VER-win64.zip" > SHA256SUMS.txt)
+          cat dist/SHA256SUMS.txt
+          ls -la dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vsemvamdam-switcher
+          path: dist/*
+          retention-days: 30
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wintest
+          path: |
+            build/wintest.exe
+            build/fake_client.exe
+          retention-days: 7
+
+  windows-tests:
+    name: Integration tests (real Windows)
+    needs: build
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: wintest
+          path: build
+
+      - name: Run integration tests
+        shell: pwsh
+        run: |
+          cd build
+          ./wintest.exe
+          if ($LASTEXITCODE -ne 0) { throw "integration tests failed ($LASTEXITCODE)" }
+
+  release:
+    name: Publish GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build, windows-tests]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: vsemvamdam-switcher
+          path: dist
+
+      - name: Create or update release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          cat > notes.md <<'EOF'
+          **Скачать:** `vsemvamdam-switcher.exe` — один файл, установка не нужна.
+
+          При первом запуске Windows SmartScreen может предупредить (файл не подписан): «Подробнее» → «Выполнить в любом случае».
+          Контрольные суммы — в `SHA256SUMS.txt`.
+          EOF
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --clobber
+          else
+            gh release create "$TAG" dist/* --title "vsemvamdam switcher ${TAG#v}" --notes-file notes.md --generate-notes
+          fi
