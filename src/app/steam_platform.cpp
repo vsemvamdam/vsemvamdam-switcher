@@ -236,7 +236,7 @@ OpResult SteamPlatform::switch_to(const SwitchRequest& req, const Progress& p) {
     text.clear();
     users.clear();
     readable = read_loginusers(r, text, users);
-    if (!readable && fsx::exists(lu_path) && edit.fallback.account.empty()) {
+    if (!readable && fsx::exists(lu_path)) {
         res.message = TR("Файл loginusers.vdf повреждён — Steam не тронут.", "loginusers.vdf is damaged — nothing changed.");
         return res;
     }
@@ -382,7 +382,8 @@ std::vector<Game> SteamPlatform::games() {
 
 void SteamPlatform::refresh_profiles(bool force, const std::function<void(bool)>& done) {
     if (refreshing_.exchange(true)) return;
-    std::thread([this, force, done] {
+    if (refresh_thread_.joinable()) refresh_thread_.join();
+    refresh_thread_ = std::thread([this, force, done] {
         bool changed = false;
         std::vector<std::string> ids;
         {
@@ -396,6 +397,7 @@ void SteamPlatform::refresh_profiles(bool force, const std::function<void(bool)>
         fsx::mkdirs(avdir);
         int failures = 0;
         for (auto& id : ids) {
+            if (stop_) break;
             int64_t checked;
             std::string old_url;
             {
@@ -437,12 +439,12 @@ void SteamPlatform::refresh_profiles(bool force, const std::function<void(bool)>
                     fsx::write_file(avatar_file, img);
                 }
             }
-            std::this_thread::sleep_for(std::chrono::milliseconds(250));
+            for (int i = 0; i < 5 && !stop_; ++i) std::this_thread::sleep_for(std::chrono::milliseconds(50));
         }
         if (changed) store_.save_meta();
         refreshing_ = false;
-        if (done) done(changed);
-    }).detach();
+        if (done && !stop_) done(changed);
+    });
 }
 
 }  // namespace vs

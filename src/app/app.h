@@ -5,6 +5,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "../core/settings.h"
@@ -63,6 +64,7 @@ private:
     std::string busy_account_;
     double busy_started_ = 0;
     std::mutex step_mtx_;
+    std::thread worker_;
 
     // ---- UI state
     enum class Page { Accounts, Settings };

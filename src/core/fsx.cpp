@@ -8,6 +8,13 @@
 
 #include "str.h"
 
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#endif
+
 namespace vs::fsx {
 
 fs::path P(const std::string& s) {
@@ -64,58 +71,143 @@ bool write_file(const std::string& p, const std::string& data) {
 
 bool mkdirs(const std::string& p) { std::error_code ec; fs::create_directories(P(p), ec); return is_dir(p); }
 
-bool remove_all(const std::string& p) {
-    std::error_code ec;
-    if (!exists(p)) return true;
-    // clear read-only attributes first
-    if (is_dir(p)) {
-        for (auto it = fs::recursive_directory_iterator(P(p), fs::directory_options::skip_permission_denied, ec);
-             it != fs::recursive_directory_iterator(); it.increment(ec)) {
-            if (ec) break;
-            fs::permissions(it->path(), fs::perms::owner_write, fs::perm_options::add, ec);
-        }
-    } else {
-        fs::permissions(P(p), fs::perms::owner_write, fs::perm_options::add, ec);
+#ifdef _WIN32
+// Win32 tree operations that never follow junctions / symbolic links (they are removed or skipped as links).
+static bool w_remove(const std::wstring& path) {
+    DWORD a = GetFileAttributesW(path.c_str());
+    if (a == INVALID_FILE_ATTRIBUTES) return true;
+    if (a & FILE_ATTRIBUTE_READONLY) SetFileAttributesW(path.c_str(), a & ~FILE_ATTRIBUTE_READONLY);
+    if (!(a & FILE_ATTRIBUTE_DIRECTORY)) return DeleteFileW(path.c_str()) || GetLastError() == ERROR_FILE_NOT_FOUND;
+    if (a & FILE_ATTRIBUTE_REPARSE_POINT) return RemoveDirectoryW(path.c_str()) != 0;  // the link itself, not its target
+    bool ok = true;
+    WIN32_FIND_DATAW fd;
+    HANDLE h = FindFirstFileW((path + L"\\*").c_str(), &fd);
+    if (h != INVALID_HANDLE_VALUE) {
+        do {
+            std::wstring n = fd.cFileName;
+            if (n == L"." || n == L"..") continue;
+            ok &= w_remove(path + L"\\" + n);
+        } while (FindNextFileW(h, &fd));
+        FindClose(h);
     }
-    ec.clear();
+    ok &= RemoveDirectoryW(path.c_str()) != 0 || GetLastError() == ERROR_FILE_NOT_FOUND;
+    return ok;
+}
+
+static bool w_copy_file(const std::wstring& from, const std::wstring& to, std::string* err) {
+    DWORD a = GetFileAttributesW(to.c_str());
+    if (a != INVALID_FILE_ATTRIBUTES && (a & FILE_ATTRIBUTE_READONLY)) SetFileAttributesW(to.c_str(), a & ~FILE_ATTRIBUTE_READONLY);
+    if (CopyFileW(from.c_str(), to.c_str(), FALSE)) return true;
+    if (err) *err = narrow(from) + ": copy error " + std::to_string(GetLastError());
+    return false;
+}
+
+static bool w_copy_tree(const std::wstring& from, const std::wstring& to, std::string* err, int depth) {
+    if (depth > 64) return false;
+    CreateDirectoryW(to.c_str(), nullptr);
+    bool ok = true;
+    WIN32_FIND_DATAW fd;
+    HANDLE h = FindFirstFileW((from + L"\\*").c_str(), &fd);
+    if (h == INVALID_HANDLE_VALUE) return GetLastError() == ERROR_FILE_NOT_FOUND;
+    do {
+        std::wstring n = fd.cFileName;
+        if (n == L"." || n == L"..") continue;
+        std::wstring s = from + L"\\" + n, d = to + L"\\" + n;
+        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+            if (fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) continue;  // never descend into junctions
+            ok &= w_copy_tree(s, d, err, depth + 1);
+        } else {
+            ok &= w_copy_file(s, d, err);
+        }
+    } while (FindNextFileW(h, &fd));
+    FindClose(h);
+    return ok;
+}
+#endif
+
+bool remove_all(const std::string& p) {
+    if (p.empty() || !exists(p)) {
+#ifdef _WIN32
+        // a dangling link still has attributes
+        if (!p.empty() && GetFileAttributesW(widen(p).c_str()) != INVALID_FILE_ATTRIBUTES) return w_remove(widen(p));
+#endif
+        return true;
+    }
+#ifdef _WIN32
+    w_remove(widen(p));
+    return !exists(p);
+#else
+    std::error_code ec;
     fs::remove_all(P(p), ec);
     return !exists(p);
+#endif
 }
 
 bool remove_file(const std::string& p) {
+#ifdef _WIN32
+    std::wstring w = widen(p);
+    DWORD a = GetFileAttributesW(w.c_str());
+    if (a == INVALID_FILE_ATTRIBUTES) return true;
+    if (a & FILE_ATTRIBUTE_DIRECTORY) return false;
+    if (a & FILE_ATTRIBUTE_READONLY) SetFileAttributesW(w.c_str(), a & ~FILE_ATTRIBUTE_READONLY);
+    return DeleteFileW(w.c_str()) != 0;
+#else
     std::error_code ec;
-    fs::permissions(P(p), fs::perms::owner_write, fs::perm_options::add, ec);
-    ec.clear();
     fs::remove(P(p), ec);
     return !exists(p);
+#endif
 }
 
 bool copy_any(const std::string& from, const std::string& to, std::string* err) {
     std::error_code ec;
     fs::path f = P(from), t = P(to);
+    if (!fs::exists(f, ec)) { if (err) *err = from + ": not found"; return false; }
+    if (t.has_parent_path()) fs::create_directories(t.parent_path(), ec);
+#ifdef _WIN32
+    if (fs::is_directory(f, ec)) {
+        fs::create_directories(t, ec);
+        return w_copy_tree(widen(from), widen(to), err, 0);
+    }
+    return w_copy_file(widen(from), widen(to), err);
+#else
     if (fs::is_directory(f, ec)) {
         fs::create_directories(t, ec);
         bool ok = true;
         for (auto it = fs::recursive_directory_iterator(f, fs::directory_options::skip_permission_denied, ec);
              it != fs::recursive_directory_iterator(); it.increment(ec)) {
             if (ec) { ok = false; break; }
+            if (it->is_symlink(ec)) { it.disable_recursion_pending(); continue; }
             fs::path rel = fs::relative(it->path(), f, ec);
             fs::path dst = t / rel;
             if (it->is_directory(ec)) { fs::create_directories(dst, ec); continue; }
             fs::create_directories(dst.parent_path(), ec);
-            fs::permissions(dst, fs::perms::owner_write, fs::perm_options::add, ec);
-            ec.clear();
             fs::copy_file(it->path(), dst, fs::copy_options::overwrite_existing, ec);
             if (ec) { ok = false; if (err) *err = U(it->path()) + ": " + ec.message(); ec.clear(); }
         }
         return ok;
     }
-    if (!fs::exists(f, ec)) { if (err) *err = from + ": not found"; return false; }
-    if (t.has_parent_path()) fs::create_directories(t.parent_path(), ec);
-    fs::permissions(t, fs::perms::owner_write, fs::perm_options::add, ec);
-    ec.clear();
     fs::copy_file(f, t, fs::copy_options::overwrite_existing, ec);
     if (ec) { if (err) *err = from + ": " + ec.message(); return false; }
+    return true;
+#endif
+}
+
+bool replace_dir(const std::string& tmp, const std::string& dir) {
+    // dir -> dir.old, tmp -> dir, then drop dir.old; on failure put the old one back
+    std::error_code ec;
+    std::string old = dir + ".old";
+    remove_all(old);
+    bool had = exists(dir);
+    if (had) {
+        fs::rename(P(dir), P(old), ec);
+        if (ec) return false;
+    }
+    fs::rename(P(tmp), P(dir), ec);
+    if (ec) {
+        if (had) { std::error_code e2; fs::rename(P(old), P(dir), e2); }
+        return false;
+    }
+    if (had) remove_all(old);
     return true;
 }
 

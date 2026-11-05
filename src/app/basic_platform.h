@@ -41,6 +41,9 @@ private:
     bool clear_login(std::string& err);
     bool backup_to(const std::string& dir, std::string& err);
     bool restore_from(const std::string& dir, std::string& err);
+    bool can_restore(const std::string& dir, std::string& err);
+    bool snapshot_into(const std::string& sid, std::string& err);
+    void autosave_unknown();
     void launch();
     // New per-user Epic Games Launcher (session in Credential Manager + DPAPI auth files)
     bool epic_new();

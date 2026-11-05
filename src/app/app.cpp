@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <chrono>
 #include <thread>
+#include <exception>
 
 #include "../core/fsx.h"
 #include "../core/i18n.h"
@@ -153,6 +154,8 @@ void App::on_window_placement(int x, int y, int w, int h, bool maximized) {
 }
 
 void App::shutdown() {
+    if (worker_.joinable()) worker_.join();  // never exit in the middle of clearing/restoring a login
+    if (steam_) steam_->stop_refresh();
     store_.settings.last_platform = cur_;
     store_.save_settings();
     store_.save_meta();
@@ -247,14 +250,22 @@ void App::run_switch(const std::string& pid, const SwitchRequest& req, bool from
         std::lock_guard<std::mutex> lk(step_mtx_);
         busy_step_ = TR("Подготовка…", "Preparing…");
     }
-    std::thread([this, p, pid, req, from_tray] {
-        OpResult r = p->switch_to(req, [this](const std::string& step) {
-            {
-                std::lock_guard<std::mutex> lk(step_mtx_);
-                busy_step_ = step;
-            }
-            ui_wake();
-        });
+    if (worker_.joinable()) worker_.join();
+    worker_ = std::thread([this, p, pid, req, from_tray] {
+        OpResult r;
+        try {
+            r = p->switch_to(req, [this](const std::string& step) {
+                {
+                    std::lock_guard<std::mutex> lk(step_mtx_);
+                    busy_step_ = step;
+                }
+                ui_wake();
+            });
+        } catch (const std::exception& e) {
+            r.ok = false;
+            r.message = std::string(TR("Внутренняя ошибка: ", "Internal error: ")) + e.what();
+            log::error("switch exception: " + std::string(e.what()));
+        }
         ui_post([this, r, pid, req, from_tray] {
             busy_ = false;
             rescan(pid);
@@ -278,7 +289,7 @@ void App::run_switch(const std::string& pid, const SwitchRequest& req, bool from
                 host_show_window();
             }
         });
-    }).detach();
+    });
 }
 
 void App::request_switch(const std::string& pid, const SwitchRequest& req) {
@@ -318,6 +329,7 @@ void App::after_switch_window() {
 void App::forget(const std::string& pid, const std::string& id) {
     Platform* p = platform(pid);
     if (!p) return;
+    if (busy_) { toast(TR("Подождите — идёт переключение", "Please wait — a switch is in progress"), true); return; }
     OpResult r = p->forget(id);
     if (selected_ == id) selected_.clear();
     rescan(pid);
@@ -334,16 +346,24 @@ void App::save_current(const std::string& pid, const std::string& name, const st
         std::lock_guard<std::mutex> lk(step_mtx_);
         busy_step_ = TR("Сохраняю вход…", "Saving login…");
     }
-    std::thread([this, p, pid, name, overwrite_id] {
+    if (worker_.joinable()) worker_.join();
+    worker_ = std::thread([this, p, pid, name, overwrite_id] {
         std::string id;
-        OpResult r = p->save_current(name, overwrite_id, id);
+        OpResult r;
+        try {
+            r = p->save_current(name, overwrite_id, id);
+        } catch (const std::exception& e) {
+            r.ok = false;
+            r.message = std::string(TR("Внутренняя ошибка: ", "Internal error: ")) + e.what();
+            log::error("save exception: " + std::string(e.what()));
+        }
         ui_post([this, r, pid, id] {
             busy_ = false;
             rescan(pid);
             if (r.ok) selected_ = id;
             toast(r.message, !r.ok);
         });
-    }).detach();
+    });
 }
 
 void App::create_shortcut(const std::string& pid, const Account& a, int state) {
@@ -469,7 +489,11 @@ bool App::handle_cli_headless(const std::vector<std::string>& args, int& rc) {
     apply_language();
     load_platform_defs();
     std::string err;
-    execute_cli(args, true, err);
+    try {
+        execute_cli(args, true, err);
+    } catch (const std::exception& e) {
+        err = e.what();
+    }
     if (!err.empty()) {
         log::error("cli: " + err);
         os::message_box("vsemvamdam switcher", err, true);

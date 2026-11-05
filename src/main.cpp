@@ -464,8 +464,9 @@ int WINAPI wWinMain(HINSTANCE hinst, HINSTANCE, PWSTR, int nShow) {
         if (g_force_frames.load() > 0) --g_force_frames;
     }
 
-    app.shutdown();
+    ShowWindow(g_hwnd, SW_HIDE);  // waiting for background work must not look like a hang
     tray_remove();
+    app.shutdown();
     ImGui_ImplDX11_Shutdown();
     ImGui_ImplWin32_Shutdown();
     ImGui::DestroyContext();

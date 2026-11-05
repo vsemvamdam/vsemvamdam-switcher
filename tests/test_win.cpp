@@ -119,6 +119,15 @@ static void test_steam(const std::string& fake) {
     // the row is gone from loginusers too
     CHECK(steam::parse_loginusers(read(fsx::join(steam, "config\\loginusers.vdf")), u) && u.size() == 1);
 
+    // damaged loginusers.vdf (and no usable backup) must never be overwritten
+    fsx::remove_file(fsx::join(steam, "config\\loginusers.vdf.vs-backup"));
+    fsx::write_file(fsx::join(steam, "config\\loginusers.vdf"), "\"users\" { \"7656\" { \"AccountName\" ");
+    SwitchRequest r3;
+    r3.account_id = "76561198000000001";
+    res = sp.switch_to(r3, nullptr);
+    CHECK(!res.ok);
+    CHECK(read(fsx::join(steam, "config\\loginusers.vdf")) == "\"users\" { \"7656\" { \"AccountName\" ");
+
     os::kill_processes({"steam.exe"}, 3000);
     CHECK(!os::any_running({"steam.exe"}));
 }

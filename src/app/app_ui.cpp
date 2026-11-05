@@ -331,7 +331,8 @@ void App::draw_header(float x, float w) {
         if (menu_item(ICON_PLAY, (std::string(TR("Запустить ", "Start ")) + nm).c_str())) toast(p->start_client().message);
         if (menu_item(ICON_POWER, (std::string(TR("Закрыть ", "Close ")) + nm).c_str())) {
             std::thread([this, p] {
-                OpResult r = p->close_client();
+                OpResult r;
+                try { r = p->close_client(); } catch (const std::exception& e) { r.message = e.what(); }
                 ui_post([this, r] { toast(r.message, !r.ok); });
             }).detach();
         }

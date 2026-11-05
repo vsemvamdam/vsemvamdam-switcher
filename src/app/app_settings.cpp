@@ -73,6 +73,7 @@ void App::draw_settings(float x, float y, float w, float h) {
 }
 
 void App::draw_settings_general() {
+    std::lock_guard<std::recursive_mutex> settings_lock(store_.mtx);  // worker threads read settings concurrently
     auto& s = store_.settings;
     bool dirty = false;
     float cw = S(230);
@@ -150,6 +151,7 @@ void App::draw_settings_general() {
 }
 
 void App::draw_settings_steam() {
+    std::lock_guard<std::recursive_mutex> settings_lock(store_.mtx);  // worker threads read settings concurrently
     auto& s = store_.settings;
     bool dirty = false;
     float cw = S(260);
@@ -214,6 +216,7 @@ void App::draw_settings_steam() {
 }
 
 void App::draw_settings_platforms() {
+    std::lock_guard<std::recursive_mutex> settings_lock(store_.mtx);  // worker threads read settings concurrently
     auto& s = store_.settings;
     bool dirty = false;
     ImGui::PushStyleColor(ImGuiCol_Text, P.text2);

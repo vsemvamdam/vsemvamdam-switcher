@@ -106,10 +106,43 @@ void test_basic(const std::string& root, const std::string& fake) {
     r = bp->save_current("Alpha", "acc-A", id);
     CHECK(!r.ok);
 
+    // broken save: switching must fail BEFORE the current login is touched
+    fsx::write_file(fsx::join(bp->account_dir("acc-A"), "_vs_registry.json"), "{ broken");
+    r = bp->switch_to(SwitchRequest{"acc-A"}, nullptr);
+    CHECK(!r.ok);
+    fsx::read_file(fsx::join(data, "token.txt"), t);
+    CHECK(t == "token-B");
+    CHECK(bp->current_account_id() == "acc-B");
+
+    // temp folders never show up as accounts
+    fsx::mkdirs(bp->account_dir("acc-Z") + ".saving");
+    CHECK(bp->scan().size() == 2);
+
     r = bp->forget("acc-B");
     CHECK(r.ok && bp->scan().size() == 1);
     os::kill_processes({"vstestclient.exe"}, 3000);
     os::reg_delete_tree("HKCU\\Software\\VsSwitcherTest");
+
+    // platform without a unique id: leaving an unsaved session keeps an automatic copy
+    std::string defs2 = R"({"Platforms":{"NoId":{"vsId":"noid","ExeLocationDefault":")" + replace_all(fsx::join(client, "vstestclient.exe"), "\\", "\\\\") +
+                        R"(","ExesToEnd":["vstestclient.exe"],"PathListToClear":["SAME_AS_LOGIN_FILES"],"LoginFiles":{")" + d +
+                        R"(\\token.txt":"token.txt"}}}})";
+    st.settings.platforms["noid"].enabled = true;
+    st.settings.platforms["noid"].launch_after = false;
+    auto p2 = make_basic_platforms(st, defs2);
+    CHECK(p2.size() == 1);
+    if (p2.empty()) return;
+    wr(fsx::join(data, "token.txt"), "unsaved-session");
+    r = p2[0]->switch_to(SwitchRequest{}, nullptr);
+    CHECK(r.ok);
+    CHECK(!fsx::exists(fsx::join(data, "token.txt")));
+    auto autos = fsx::list_dir(fsx::join(st.dir, "autosave\\noid"), true);
+    CHECK(autos.size() == 1);
+    if (!autos.empty()) {
+        std::string t2;
+        fsx::read_file(fsx::join(fsx::join(st.dir, "autosave\\noid\\" + autos[0]), "token.txt"), t2);
+        CHECK(t2 == "unsaved-session");
+    }
 }
 
 // New Epic Games Launcher: Credential Manager + DPAPI-protected auth files

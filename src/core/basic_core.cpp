@@ -1,5 +1,6 @@
 #include "basic_core.h"
 
+#include <algorithm>
 #include <cctype>
 #include <chrono>
 #include <random>
@@ -145,9 +146,29 @@ static std::string literal_hint(const std::string& pat) {
     return best;
 }
 
+static std::string find_email(const std::string& t) {
+    auto local = [](unsigned char c) { return std::isalnum(c) || c == '.' || c == '_' || c == '%' || c == '+' || c == '-'; };
+    auto dom = [](unsigned char c) { return std::isalnum(c) || c == '.' || c == '-'; };
+    for (size_t at = t.find('@'); at != std::string::npos; at = t.find('@', at + 1)) {
+        size_t a = at;
+        while (a > 0 && local((unsigned char)t[a - 1])) --a;
+        size_t b = at + 1;
+        while (b < t.size() && dom((unsigned char)t[b])) ++b;
+        if (a == at || b == at + 1) continue;
+        std::string d = t.substr(at + 1, b - at - 1);
+        while (!d.empty() && (d.back() == '.' || d.back() == '-')) d.pop_back();
+        size_t dot = d.rfind('.');
+        if (dot == std::string::npos || dot == 0) continue;
+        std::string tld = d.substr(dot + 1);
+        if (tld.size() < 2 || !std::all_of(tld.begin(), tld.end(), [](unsigned char c) { return std::isalpha(c); })) continue;
+        return t.substr(a, at - a) + "@" + d;
+    }
+    return {};
+}
+
 std::string regex_id(const std::string& text, const std::string& pattern_in) {
     std::string pat = pattern_in;
-    if (pat == "EMAIL_REGEX") pat = R"(([A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}))";
+    if (pat == "EMAIL_REGEX") return find_email(text);  // hand-written: std::regex can overflow the stack on long input
     auto flags = std::regex::ECMAScript | std::regex::optimize;
     bool dotall = false;
     for (;;) {
@@ -195,7 +216,7 @@ std::string regex_id(const std::string& text, const std::string& pattern_in) {
         while (start <= text.size()) {
             size_t nl = text.find('\n', start);
             size_t end = nl == std::string::npos ? text.size() : nl;
-            std::string line = text.substr(start, end - start);
+            std::string line = text.substr(start, std::min<size_t>(end - start, 16384));  // bound regex work per line
             if (!line.empty() && line.back() == '\r') line.pop_back();
             if (hint.empty() || ((flags & std::regex::icase) ? icontains(line, hint) : line.find(hint) != std::string::npos)) {
                 for (std::sregex_iterator it(line.begin(), line.end(), re), e; it != e && !done; ++it) take(*it);

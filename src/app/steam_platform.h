@@ -1,6 +1,7 @@
 // vsemvamdam-switcher — Steam account switching
 #pragma once
 #include <mutex>
+#include <thread>
 
 #include "platform.h"
 
@@ -29,6 +30,8 @@ public:
     void refresh_profiles(bool force, const std::function<void(bool changed)>& done);
     std::string avatar_for(const std::string& id64);
     std::string userdata_dir(const std::string& id64);
+    void stop_refresh() { stop_ = true; if (refresh_thread_.joinable()) refresh_thread_.join(); }
+    ~SteamPlatform() override { stop_refresh(); }
 
 private:
     Store& store_;
@@ -36,6 +39,8 @@ private:
     std::vector<Game> games_;
     bool games_loaded_ = false;
     std::atomic<bool> refreshing_{false};
+    std::atomic<bool> stop_{false};
+    std::thread refresh_thread_;
     OpResult close_steam(const Progress& p);
 };
 

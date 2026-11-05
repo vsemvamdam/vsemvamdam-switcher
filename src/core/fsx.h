@@ -21,8 +21,10 @@ bool write_file(const std::string& p, const std::string& data);
 bool mkdirs(const std::string& p);
 bool remove_all(const std::string& p);
 bool remove_file(const std::string& p);
-// Copy a file or a directory tree. Overwrites existing destination files.
+// Copy a file or a directory tree. Overwrites existing destination files. Never follows junctions/symlinks.
 bool copy_any(const std::string& from, const std::string& to, std::string* err = nullptr);
+// Atomically replaces directory `dir` with `tmp` (keeps the old one if anything fails).
+bool replace_dir(const std::string& tmp, const std::string& dir);
 std::string join(const std::string& a, const std::string& b);
 std::string parent(const std::string& p);
 std::string filename(const std::string& p);

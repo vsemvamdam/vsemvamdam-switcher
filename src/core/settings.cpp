@@ -156,7 +156,7 @@ bool Store::save_settings() {
     for (auto& [k, p] : s.platforms)
         ps[k] = {{"enabled", p.enabled}, {"exe_path", p.exe_path}, {"args", p.args}, {"launch_after", p.launch_after}};
     j["platforms"] = ps;
-    bool ok = fsx::write_file(fsx::join(dir, "settings.json"), j.dump(2));
+    bool ok = fsx::write_file(fsx::join(dir, "settings.json"), j.dump(2, ' ', false, nlohmann::json::error_handler_t::replace));
     if (!ok) log::error("cannot write settings.json");
     return ok;
 }
@@ -190,7 +190,7 @@ bool Store::save_meta() {
         }
         j[plat] = a;
     }
-    bool ok = fsx::write_file(fsx::join(dir, "accounts.json"), j.dump(1));
+    bool ok = fsx::write_file(fsx::join(dir, "accounts.json"), j.dump(1, ' ', false, nlohmann::json::error_handler_t::replace));
     if (!ok) log::error("cannot write accounts.json");
     return ok;
 }
