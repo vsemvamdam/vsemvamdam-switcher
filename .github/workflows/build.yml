@@ -33,9 +33,11 @@ jobs:
         run: echo "version=$(sed -n 's/.*VS_VER_STRING "\(.*\)".*/\1/p' src/version.h)" >> "$GITHUB_OUTPUT"
 
       - name: Install toolchain
+        timeout-minutes: 8
         run: |
-          sudo apt-get update -q
-          sudo apt-get install -y -q mingw-w64 zip
+          APT="-o Acquire::Retries=5 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30"
+          sudo apt-get $APT update -q
+          sudo apt-get $APT install -y -q --no-install-recommends mingw-w64 zip
 
       - name: Check tag matches src/version.h
         if: startsWith(github.ref, 'refs/tags/v')
