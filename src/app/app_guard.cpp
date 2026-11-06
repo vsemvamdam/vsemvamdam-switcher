@@ -603,9 +603,23 @@ void App::draw_guard_detail(const GuardView& v, float w) {
     std::string name = guard_name(v);
     ImGui::Dummy(ImVec2(0, S(6)));
 
-    // ---- code card
+    // ---- code card (in a narrow window the code shrinks and the button goes under it)
+    std::string code = guard_->code(v.key);
+    std::string shown = streamer ? mask_code(code) : code;
+    float fs = S(46);
+    float track = S(5);
+    float cw = code_width(F_SEMI, fs, shown, track);
+    float code_room = w - S(40) - S(64);  // card padding, countdown ring
+    if (cw > code_room && cw > 0) {
+        float k = std::max(0.5f, code_room / cw);
+        fs *= k;
+        track *= k;
+        cw = code_width(F_SEMI, fs, shown, track);
+    }
+    float bw = S(140);
+    bool stacked = S(20) + cw + S(8) + S(64) + S(16) + bw + S(20) > w;
     ImVec2 c0 = ImGui::GetCursorScreenPos();
-    float ch = S(176);
+    float ch = S(176) + (stacked ? S(50) : 0.0f);
     ImVec2 c1(c0.x + w, c0.y + ch);
     dl->AddRectFilled(c0, c1, P.surface, S(18));
     dl->AddRect(c0, c1, P.border, S(18), S(1));
@@ -622,12 +636,7 @@ void App::draw_guard_detail(const GuardView& v, float w) {
         gctx_open_ = true;
     }
     // big code + ring
-    std::string code = guard_->code(v.key);
-    std::string shown = streamer ? mask_code(code) : code;
-    float fs = S(46);
-    float track = S(5);
-    float cw = code_width(F_SEMI, fs, shown, track);
-    ImVec2 cp(c0.x + S(20), c0.y + S(84));
+    ImVec2 cp(c0.x + S(20), c0.y + S(84) + (S(46) - fs) * 0.5f);
     ImVec2 ca(cp.x - S(8), cp.y - S(6)), cb(cp.x + cw + S(8), cp.y + fs + S(6));
     ImGui::SetCursorScreenPos(ca);
     bool click = ImGui::InvisibleButton("##bigcode", ImVec2(cb.x - ca.x, cb.y - ca.y));
@@ -646,9 +655,9 @@ void App::draw_guard_detail(const GuardView& v, float w) {
     ImVec2 sls = F_SEMI->CalcTextSizeA(S(12.5f), FLT_MAX, 0, sl.c_str());
     dl->AddText(F_SEMI, S(12.5f), ImVec2(rc.x - sls.x * 0.5f, rc.y - sls.y * 0.5f), secs <= 5 ? P.danger : P.text2, sl.c_str());
     // copy button
-    float bw = S(140);
-    ImGui::SetCursorScreenPos(ImVec2(c1.x - bw - S(20), cp.y + (fs - S(38)) * 0.5f + S(2)));
-    if (pill_button(TR("Копировать", "Copy"), true, ImVec2(bw, S(38)), !code.empty(), ICON_COPY)) guard_copy_code(v.key);
+    if (stacked) ImGui::SetCursorScreenPos(ImVec2(c0.x + S(20), c0.y + S(84) + S(46) + S(16)));
+    else ImGui::SetCursorScreenPos(ImVec2(c1.x - bw - S(20), cp.y + (fs - S(38)) * 0.5f + S(2)));
+    if (pill_button(TR("Копировать", "Copy"), true, ImVec2(stacked ? w - S(40) : bw, S(38)), !code.empty(), ICON_COPY)) guard_copy_code(v.key);
     if (!v.fully_enrolled) {
         dl->AddText(F_REG, S(kBase * 0.85f), ImVec2(c0.x + S(20), c1.y - S(26)), P.danger,
                     TR("Привязка не завершена — код ещё не действует", "Linking isn't finished — the code is not active yet"));
@@ -904,12 +913,13 @@ void App::draw_settings_guard() {
                 if (vals[i] == s.guard_poll_sec) idx = i;
             ImGui::SetNextItemWidth(cw);
             ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(S(12), S(8)));
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(S(6), S(6)));
             if (ImGui::BeginCombo("##gpollsec", it[idx])) {
                 for (int i = 0; i < 5; ++i)
                     if (ImGui::Selectable(it[i], idx == i)) { s.guard_poll_sec = vals[i]; dirty = true; }
                 ImGui::EndCombo();
             }
-            ImGui::PopStyleVar();
+            ImGui::PopStyleVar(2);
         }
         setting_row_end();
 
@@ -1027,7 +1037,11 @@ void App::draw_guard_dialogs() {
             if (begin_dialog(ids[9], TR("Не всё удалось импортировать", "Some files were not imported"), 520)) {
                 ImGui::PushStyleColor(ImGuiCol_Text, P.text2);
                 ImGui::PushTextWrapPos(0);
-                for (auto& e : g_import_errors_) ImGui::BulletText("%s", e.c_str());
+                for (auto& e : g_import_errors_) {  // BulletText can't wrap: long reasons were cut at the edge
+                    ImGui::Bullet();
+                    ImGui::SameLine(0, S(8));
+                    ImGui::TextWrapped("%s", e.c_str());
+                }
                 ImGui::PopTextWrapPos();
                 ImGui::PopStyleColor();
                 int r = dialog_buttons(TR("Понятно", "OK"), nullptr);
@@ -1068,8 +1082,10 @@ void App::draw_guard_dialogs() {
                 bool match = std::strcmp(g_buf1_, g_buf2_) == 0;
                 if (!match && g_buf2_[0]) error_line(TR("Ключи не совпадают", "Passkeys don't match"));
                 else if (!g_buf1_[0]) error_line(TR("Без ключа файлы будут не зашифрованы", "Without a passkey the files are not encrypted"));
+                else error_line(" ");  // keep the line: the dialog must not jump while typing
                 int r = dialog_buttons(TR("Сохранить", "Save"), TR("Отмена", "Cancel"), match);
-                if (r == 1 && match) {
+                bool enter = ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter);
+                if ((r == 1 || enter) && match) {
                     std::string out, err;
                     if (guard_->export_sda(gdlg_keys_, g_export_folder_, g_buf1_, out, err)) {
                         toast(std::string(TR("Сохранено: ", "Saved: ")) + out);

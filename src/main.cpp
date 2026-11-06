@@ -444,8 +444,10 @@ int WINAPI wWinMain(HINSTANCE hinst, HINSTANCE, PWSTR, int nShow) {
 
     bool running = true;
     while (running) {
-        bool animate = app.animating();
-        if (g_force_frames.load() <= 0 && !animate) {
+        // nothing is drawn while minimized / in the tray, so nothing can animate there either:
+        // without this the loop would spin (e.g. a toast that only expires when drawn) and eat a CPU core
+        bool animate = !g_hidden && !g_minimized && app.animating();
+        if ((g_force_frames.load() <= 0 || g_hidden || g_minimized) && !animate) {
             DWORD timeout = INFINITE;
             if (!g_hidden && !g_minimized && ImGui::GetCurrentContext()) {
                 if (ImGui::IsAnyItemHovered()) timeout = 60;

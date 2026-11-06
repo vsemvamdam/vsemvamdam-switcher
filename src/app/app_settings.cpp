@@ -23,13 +23,14 @@ static bool combo_row(const char* id, int* v, const char* const* items, int n, f
     ImGui::SetNextItemWidth(w);
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(S(12), S(8)));
     ImGui::PushStyleVar(ImGuiStyleVar_PopupRounding, S(10));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(S(6), S(6)));  // the list must not sit flush on the next control
     bool changed = false;
     if (ImGui::BeginCombo(id, items[std::clamp(*v, 0, n - 1)])) {
         for (int i = 0; i < n; ++i)
             if (ImGui::Selectable(items[i], *v == i)) { *v = i; changed = true; }
         ImGui::EndCombo();
     }
-    ImGui::PopStyleVar(2);
+    ImGui::PopStyleVar(3);
     return changed;
 }
 

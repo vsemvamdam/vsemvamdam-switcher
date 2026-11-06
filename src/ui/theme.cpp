@@ -5,6 +5,10 @@
 #endif
 #include <windows.h>
 
+#include <string>
+#include <utility>
+#include <vector>
+
 #include "icons.h"
 
 namespace vs::ui {
@@ -40,6 +44,37 @@ static bool resource(int id, void*& data, int& size) {
     return data && size > 0;
 }
 
+// A system font mapped into memory once and shared by all three weights: only the pages with glyphs that are
+// actually drawn get loaded, so a 20 MB CJK font costs next to nothing until a name needs it.
+struct MappedFont {
+    const void* data = nullptr;
+    int size = 0;
+};
+static MappedFont map_system_font(const wchar_t* file) {
+    static std::vector<std::pair<std::wstring, MappedFont>> cache;
+    for (auto& [name, m] : cache)
+        if (name == file) return m;
+    MappedFont m;
+    wchar_t dir[MAX_PATH] = {0};
+    if (GetWindowsDirectoryW(dir, MAX_PATH)) {
+        std::wstring path = std::wstring(dir) + L"\\Fonts\\" + file;
+        HANDLE f = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (f != INVALID_HANDLE_VALUE) {
+            LARGE_INTEGER sz{};
+            if (GetFileSizeEx(f, &sz) && sz.QuadPart > 1024 && sz.QuadPart < 64ll * 1024 * 1024) {
+                if (HANDLE map = CreateFileMappingW(f, nullptr, PAGE_READONLY, 0, 0, nullptr)) {
+                    m.data = MapViewOfFile(map, FILE_MAP_READ, 0, 0, 0);  // stays mapped for the life of the process
+                    m.size = m.data ? (int)sz.QuadPart : 0;
+                    CloseHandle(map);
+                }
+            }
+            CloseHandle(f);
+        }
+    }
+    cache.push_back({file, m});
+    return m;
+}
+
 static ImFont* add_font(int id) {
     ImGuiIO& io = ImGui::GetIO();
     void* d = nullptr;
@@ -68,12 +103,15 @@ static ImFont* add_font(int id) {
         ic.GlyphMinAdvanceX = kBase;
         io.Fonts->AddFontFromMemoryTTF(di, si, kBase, &ic);
     }
-    // Symbols fallback for rare glyphs (arrows, emoji-like) from system font
-    {
+    // fallbacks for what Inter doesn't have — Steam names often carry emoji, symbols, Chinese / Japanese / Korean:
+    // symbols, emoji (drawn in one colour), CJK with kana, Hangul
+    for (const wchar_t* file : {L"seguisym.ttf", L"seguiemj.ttf", L"msyh.ttc", L"malgun.ttf"}) {
+        MappedFont m = map_system_font(file);
+        if (!m.data) continue;
         ImFontConfig sc;
         sc.MergeMode = true;
-        if (GetFileAttributesW(L"C:\\Windows\\Fonts\\seguisym.ttf") != INVALID_FILE_ATTRIBUTES)
-            io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\seguisym.ttf", kBase, &sc);
+        sc.FontDataOwnedByAtlas = false;
+        io.Fonts->AddFontFromMemoryTTF(const_cast<void*>(m.data), m.size, kBase, &sc);
     }
     return f;
 }

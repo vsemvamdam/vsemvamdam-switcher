@@ -67,6 +67,23 @@ static void test_guard_store(const std::string& root) {
         // picking the encrypted file alone still finds its manifest
         r = g.import_paths({fsx::join(sda, "76561198000000003.maFile")}, "", resolve);
         CHECK(r.need_passkey);
+        // junk is reported as "not a maFile" (not as "encrypted"), a lone base64 blob without a manifest as encrypted
+        {
+            std::string junk = fsx::join(base, "junk.maFile"), broken = fsx::join(base, "broken.maFile"), blob = fsx::join(base, "blob.maFile");
+            fsx::write_file(junk, "not json at all");
+            fsx::write_file(broken, "{\"shared_secret\": 12, \"account_name\": ");
+            fsx::write_file(blob, "QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVo=");
+            auto rj = g.import_paths({junk, broken, blob}, "", resolve);
+            CHECK(rj.added == 0 && rj.errors.size() == 3);
+            int encrypted = 0;
+            for (auto& e : rj.errors) {
+                CHECK(e.find("JSON") == std::string::npos);  // no raw parser wording in the interface
+                if (e.find(TR("зашифрован", "encrypted")) != std::string::npos) ++encrypted;
+            }
+            CHECK(encrypted == 1);
+            for (auto& e : rj.errors)
+                if (e.find("blob.maFile") == 0) CHECK(e.find(TR("зашифрован", "encrypted")) != std::string::npos);
+        }
         // re-import updates instead of duplicating
         r = g.import_paths({f1}, "", resolve);
         CHECK(r.added == 0 && r.updated == 1 && g.list().size() == 3);

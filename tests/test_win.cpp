@@ -10,6 +10,7 @@
 #include "../src/app/basic_platform.h"
 #include "../src/app/steam_platform.h"
 #include "../src/core/fsx.h"
+#include "../src/core/i18n.h"
 #include "../src/core/settings.h"
 #include "../src/core/steam_core.h"
 #include "../src/core/str.h"

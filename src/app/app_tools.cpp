@@ -739,6 +739,7 @@ void App::draw_farm_hours(float w, float h) {
                             TR("10 часов", "10 hours"), TR("24 часа", "24 hours")};
         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(S(12), (S(36) - ImGui::GetFontSize()) * 0.5f));
         ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, S(18));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(S(6), S(6)));
         ImGui::SetCursorScreenPos(ImVec2(cx, cy + (rh - ImGui::GetFrameHeight()) * 0.5f));
         ImGui::SetNextItemWidth(cw);
         if (ImGui::BeginCombo("##hlimit", it[std::clamp(hours_limit_, 0, 5)])) {
@@ -746,7 +747,7 @@ void App::draw_farm_hours(float w, float h) {
                 if (ImGui::Selectable(it[i], hours_limit_ == i)) hours_limit_ = i;
             ImGui::EndCombo();
         }
-        ImGui::PopStyleVar(2);
+        ImGui::PopStyleVar(3);
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", TR("Остановить фарм через…", "Stop the farm after…"));
         ImGui::SetCursorScreenPos(ImVec2(cx + cw + S(10), cy));
         std::string st = std::string(TR("Начать", "Start")) + " (" + std::to_string(hours_sel_.size()) + ")";

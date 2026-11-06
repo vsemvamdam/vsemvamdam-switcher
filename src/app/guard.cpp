@@ -579,6 +579,21 @@ static bool looks_like_json(const std::string& s) {
     return p != std::string::npos && s[p] == '{';
 }
 
+// an SDA-encrypted maFile is one base64 blob; anything else that isn't JSON is just not a maFile
+static bool looks_like_encrypted(const std::string& s) {
+    std::string t = trim(s);
+    if (t.size() < 24 || t.size() % 4 != 0) return false;
+    return t.find_first_not_of("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=") == std::string::npos;
+}
+
+// parse_mafile's technical reasons in the interface language
+static std::string mafile_error_text(const std::string& e) {
+    if (e == "not a JSON object") return TR("файл повреждён или это не maFile", "the file is damaged or not a maFile");
+    if (e == "shared_secret is missing or invalid")
+        return TR("в файле нет ключа shared_secret — это не maFile аутентификатора", "no shared_secret in the file — not an authenticator maFile");
+    return e;
+}
+
 ImportReport Guard::import_paths(const std::vector<std::string>& paths, const std::string& passkey,
                                  const std::function<uint64_t(const std::string&)>& resolve) {
     ImportReport rep;
@@ -665,7 +680,7 @@ ImportReport Guard::import_paths(const std::vector<std::string>& paths, const st
             }
             guard::Account a;
             std::string err;
-            if (!guard::parse_mafile(text, a, &err)) rep.errors.push_back(e.filename + ": " + err);
+            if (!guard::parse_mafile(text, a, &err)) rep.errors.push_back(e.filename + ": " + mafile_error_text(err));
             else finish(std::move(a), path, e.steamid);
             crypto::wipe(text);
         }
@@ -682,6 +697,10 @@ ImportReport Guard::import_paths(const std::vector<std::string>& paths, const st
             continue;
         }
         if (!looks_like_json(text)) {
+            if (!looks_like_encrypted(text)) {
+                rep.errors.push_back(fsx::filename(f) + ": " + mafile_error_text("not a JSON object"));
+                continue;
+            }
             if (fsx::is_file(fsx::join(fsx::parent(f), "manifest.json"))) continue;  // handled with its folder above
             rep.errors.push_back(fsx::filename(f) + TR(": файл зашифрован — выберите всю папку maFiles вместе с manifest.json",
                                                          ": the file is encrypted — pick the whole maFiles folder with manifest.json"));
@@ -689,7 +708,7 @@ ImportReport Guard::import_paths(const std::vector<std::string>& paths, const st
         }
         guard::Account a;
         std::string err;
-        if (!guard::parse_mafile(text, a, &err)) rep.errors.push_back(fsx::filename(f) + ": " + err);
+        if (!guard::parse_mafile(text, a, &err)) rep.errors.push_back(fsx::filename(f) + ": " + mafile_error_text(err));
         else finish(std::move(a), f, 0);
         crypto::wipe(text);
     }

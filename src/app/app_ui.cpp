@@ -641,8 +641,14 @@ void App::draw_list(const std::vector<Account>& list, float avail) {
             spinner(dl, ImVec2(ap.x + av * 0.5f, ap.y + av * 0.5f), av * 0.22f, P.text, S(2));
         }
         float tx = ap.x + av + S(14);
-        dl->AddText(F_MED, S(kBase), ImVec2(tx, ap.y + S(2)), P.text, name.c_str());
-        float nx = tx + F_MED->CalcTextSizeA(S(kBase), FLT_MAX, 0, name.c_str()).x + S(8);
+        // a long custom name stops before the badges, the code chip and the time instead of running over them
+        float badges_w = 0;
+        if (a.current) badges_w += badge_size(TR("СЕЙЧАС", "ACTIVE"), 10.0f).x + S(4);
+        if (a.vac && store_.settings.steam_show_vac) badges_w += badge_size("VAC", 10.0f).x + S(4);
+        if (a.limited && store_.settings.steam_show_limited) badges_w += badge_size("LTD", 10.0f).x + S(4);
+        float name_max = std::max(S(40), avail - (tx - p0.x) - S(200) - badges_w - S(8));
+        text_clipped(dl, F_MED, kBase, ImVec2(tx, ap.y + S(2)), name_max, P.text, name);
+        float nx = tx + std::min(F_MED->CalcTextSizeA(S(kBase), FLT_MAX, 0, name.c_str()).x, name_max) + S(8);
         auto put_badge = [&](const char* t, ImU32 fg, ImU32 bg) {
             ImVec2 bs = badge_size(t, 10.0f);
             badge(dl, ImVec2(nx, ap.y + S(3)), t, fg, bg, 10.0f);
@@ -701,6 +707,17 @@ void App::draw_bottom_bar(float x, float y, float w, float h) {
         if (a.id == selected_) sel = &a;
 
     float lx = x + S(28);
+    // the controls on the right decide how much room the text on the left has (long names must not run under them)
+    float right_w = S(132) + S(10) + S(40) + S(10);
+    if (p && p->is_steam()) {
+        const char* label = state_choice_ == 0 ? TR("Статус: по умолчанию", "Status: default") : steam_state_label(kStates[state_choice_ - 1]);
+        ImGui::PushFont(F_MED, kBase * 0.95f);
+        right_w += ImGui::CalcTextSize(label).x + S(52);
+        ImGui::PopFont();
+    } else {
+        right_w += S(150) + S(10);
+    }
+    float left_max = std::max(S(40), (x + w - S(28) - right_w) - lx - S(16));
     if (busy_ && busy_platform_ == cur_) {
         spinner(dl, ImVec2(lx + S(14), cy), S(10), P.text, S(2.2f));
         std::string step;
@@ -717,14 +734,14 @@ void App::draw_bottom_bar(float x, float y, float w, float h) {
         float av = S(36);
         std::string name = display_name(cur_, *sel);
         draw_avatar(dl, sel->avatar_path, name, sel->id, ImVec2(lx, cy - av * 0.5f), av, 0.24f);
-        dl->AddText(F_MED, S(kBase), ImVec2(lx + av + S(12), cy - S(17)), P.text, name.c_str());
+        text_clipped(dl, F_MED, kBase, ImVec2(lx + av + S(12), cy - S(17)), left_max - av - S(12), P.text, name);
         std::string sub;
         if (p->is_steam()) sub = store_.settings.streamer_mode ? std::string("SteamID ••••") : sel->login + " · " + sel->id;
         else sub = store_.settings.streamer_mode ? std::string("•••") : sel->login;
-        text_clipped(dl, F_REG, kBase * 0.85f, ImVec2(lx + av + S(12), cy + S(2)), w * 0.36f, P.text3, sub);
+        text_clipped(dl, F_REG, kBase * 0.85f, ImVec2(lx + av + S(12), cy + S(2)), left_max - av - S(12), P.text3, sub);
     } else {
-        dl->AddText(F_REG, S(kBase * 0.95f), ImVec2(lx, cy - S(9)), P.text3,
-                    TR("Выберите аккаунт · двойной клик — войти", "Pick an account · double-click to sign in"));
+        text_clipped(dl, F_REG, kBase * 0.95f, ImVec2(lx, cy - S(9)), left_max, P.text3,
+                     TR("Выберите аккаунт · двойной клик — войти", "Pick an account · double-click to sign in"));
     }
 
     // right side buttons
