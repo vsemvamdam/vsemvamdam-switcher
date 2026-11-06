@@ -39,7 +39,7 @@ $(OUT)/obj/%.o: %.cpp
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) -MMD -MP -c $< -o $@
 
-$(OUT)/obj/app_res.o: res/app.rc res/app.manifest res/app.ico res/icon256.png src/version.h src/core/platforms.json res/fonts/*.ttf
+$(OUT)/obj/app_res.o: res/app.rc res/app.manifest res/app.ico src/version.h src/core/platforms.json res/fonts/*.ttf
 	@mkdir -p $(dir $@)
 	$(WINDRES) -I res -O coff res/app.rc -o $@
 

@@ -32,19 +32,7 @@ struct Job {
     unsigned seed;
     bool placeholder;
     bool dark = false;
-    int res = 0;  // RCDATA resource id (0 = not a resource)
 };
-
-bool load_resource(int id, img::Image& out) {
-    HRSRC r = FindResourceW(nullptr, MAKEINTRESOURCEW(id), MAKEINTRESOURCEW(10) /*RT_RCDATA*/);
-    if (!r) return false;
-    HGLOBAL g = LoadResource(nullptr, r);
-    if (!g) return false;
-    const char* data = (const char*)LockResource(g);
-    DWORD size = SizeofResource(nullptr, r);
-    if (!data || !size) return false;
-    return img::decode(std::string(data, size), out);
-}
 
 struct Done {
     std::string key;
@@ -73,8 +61,6 @@ void worker() {
         img::Image im;
         if (j.placeholder) {
             im = img::placeholder(j.seed, j.px, j.dark);
-        } else if (j.res) {
-            load_resource(j.res, im);
         } else if (j.exe) {
             int w = 0, h = 0;
             std::vector<uint8_t> rgba;
@@ -172,15 +158,6 @@ ImTextureID tex_exe_icon(const std::string& exe, int px) {
         return (ImTextureID)0;
     }
     return request(key, Job{key, exe, px, 0.0f, true, 0, false}, 0);
-}
-
-ImTextureID tex_resource(int id, int px) {
-    std::string key = "r|" + std::to_string(id) + "|" + std::to_string(px);
-    auto it = g_cache.find(key);
-    if (it != g_cache.end()) return (ImTextureID)it->second.srv;
-    Job j{key, "", px, 0.0f, false, 0, false};
-    j.res = id;
-    return request(key, j, 0);
 }
 
 ImTextureID tex_placeholder(unsigned seed, int px, float round, bool dark) {
