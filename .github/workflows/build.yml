@@ -6,7 +6,7 @@ name: build
 
 on:
   push:
-    branches: [main]
+    branches: ["**"]   # every branch is built and tested; releases come only from main / tags (see the release job)
     tags: ["v*"]
   pull_request:
   workflow_dispatch:
@@ -82,6 +82,7 @@ jobs:
           path: |
             build/wintest.exe
             build/fake_client.exe
+            build/net_probe.exe
           retention-days: 7
 
   windows-tests:
@@ -103,6 +104,21 @@ jobs:
           cd build
           ./wintest.exe
           if ($LASTEXITCODE -ne 0) { throw "integration tests failed ($LASTEXITCODE)" }
+
+      # Talks to the real Steam API without any account (server time, RSA key, a sign-in with a random name).
+      # Informational: Steam being down must not block a release.
+      - name: Steam Guard protocol smoke test
+        continue-on-error: true
+        timeout-minutes: 3
+        shell: pwsh
+        run: |
+          cd build
+          $out = ./net_probe.exe
+          $code = $LASTEXITCODE
+          $out | ForEach-Object { Write-Output $_ }
+          $out | ForEach-Object { Write-Output "::notice title=Steam probe::$($_.Trim())" }
+          "### Steam Guard protocol smoke test`n" + '```' + "`n" + ($out -join "`n") + "`n" + '```' | Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY
+          if ($code -ne 0) { throw "Steam protocol smoke test reported a problem" }
 
   release:
     name: Publish GitHub Release

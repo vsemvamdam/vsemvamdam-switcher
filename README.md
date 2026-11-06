@@ -2,11 +2,11 @@
 
 [![build](https://github.com/vsemvamdam/vsemvamdam-switcher/actions/workflows/build.yml/badge.svg)](https://github.com/vsemvamdam/vsemvamdam-switcher/actions/workflows/build.yml)
 
-Быстрый переключатель аккаунтов для Windows: Steam, Epic Games, Battle.net, Riot, Ubisoft Connect, Discord, EA app и другие.
+Быстрый переключатель аккаунтов для Windows: Steam, Epic Games, Battle.net, Riot, Ubisoft Connect, Discord, EA app и другие. Со встроенным Steam Guard — заменой Steam Desktop Authenticator.
 
 **Скачать:** [последний релиз](https://github.com/vsemvamdam/vsemvamdam-switcher/releases/latest) → `vsemvamdam-switcher.exe`.
 
-Один `.exe` на ~3 МБ, нативный интерфейс на Direct3D 11 (Dear ImGui) — без Chromium/WebView, стартует мгновенно и не грузит систему в фоне: кадры рисуются только когда что-то меняется.
+Один `.exe` на ~4 МБ, нативный интерфейс на Direct3D 11 (Dear ImGui) — без Chromium/WebView, стартует мгновенно и не грузит систему в фоне: кадры рисуются только когда что-то меняется.
 
 ## Что умеет
 
@@ -18,6 +18,15 @@
 - копирование логина, SteamID64 / SteamID3 / SteamID, ссылки на профиль;
 - «Забыть» аккаунт, ярлык на рабочий стол с аватаркой, заметки, свои имена, порядок перетаскиванием;
 - три способа закрытия Steam: «Быстро» (штатный выход, через 2,5 с — принудительно), «Мгновенно», «Аккуратно».
+
+**Steam Guard** — мобильный аутентификатор, как в [Steam Desktop Authenticator](https://github.com/Jessecar96/SteamDesktopAuthenticator)
+- коды для входа: в разделе «Steam Guard» и прямо на карточках аккаунтов Steam, щелчок копирует;
+- подтверждение обменов и продаж на Торговой площадке — по одному или все сразу;
+- фоновая проверка подтверждений с уведомлениями Windows и автоподтверждением продаж и/или обменов (по желанию, как в SDA);
+- импорт из SDA: папка `maFiles` (в том числе зашифрованная ключом SDA) или отдельные `.maFile` — кнопкой или просто перетащив их в окно; папку SDA на компьютере свитчер находит сам;
+- вход в аккаунт для подтверждений: код Steam Guard подставляется автоматически, пароль не сохраняется, сессия продлевается сама;
+- привязка нового аккаунта (с номером телефона или без), код восстановления, удаление аутентификатора из Steam;
+- резервная копия в формате SDA — с шифрованием ключом или без, её откроет и сам SDA.
 
 **Другие клиенты** — сохраняют и подменяют файлы/ключи реестра, где клиент помнит вход: «Сохранить текущий» → «Новый вход» → войти во второй аккаунт → «Сохранить текущий». Дальше переключение в один клик. Каталог платформ — `src/core/platforms.json`, свой можно положить в папку данных как `platforms.json`.
 
@@ -33,6 +42,8 @@ vsemvamdam-switcher.exe --switch steam:<SteamID64> --run-app 730
 vsemvamdam-switcher.exe --switch epic:<id>
 vsemvamdam-switcher.exe --new steam        # экран входа
 vsemvamdam-switcher.exe --tray             # запуск в трей
+vsemvamdam-switcher.exe --guard            # открыть раздел Steam Guard
+vsemvamdam-switcher.exe --guard-code <логин|SteamID64>   # скопировать текущий код Steam Guard
 ```
 
 Если свитчер не запущен, команда `--switch` выполняется без окна и сразу завершается — ярлыки работают мгновенно.
@@ -43,16 +54,18 @@ vsemvamdam-switcher.exe --tray             # запуск в трей
 
 Пароли не сохраняются нигде.
 
+Данные Steam Guard лежат в `guard\` внутри папки данных и зашифрованы средствами Windows (DPAPI) — открыть их может только ваша учётная запись Windows на этом компьютере. Поэтому обязательно сделайте резервную копию maFile («⋯» → «Резервная копия всех») и сохраните коды восстановления: после переустановки Windows без копии данные не открыть.
+
 ## Сборка
 
 Нужен MinGW-w64 (кросс-компиляция из Linux или MSYS2 на Windows):
 
 ```
 make            # build/vsemvamdam-switcher.exe
-make test       # юнит-тесты ядра (VDF, loginusers, статус, движок платформ)
+make test       # юнит-тесты ядра (VDF, loginusers, статус, движок платформ, Steam Guard и криптография)
 make wintest    # интеграционный тест с фейковыми Steam и клиентом: wine build/wintest.exe
 ```
 
 ## Лицензия
 
-GPL-3.0. Механика переключения и описания платформ основаны на открытом [TcNo Account Switcher](https://github.com/TCNOco/TcNo-Acc-Switcher) (GPL-3.0). Шрифты Inter (OFL) и Lucide (ISC), интерфейс — Dear ImGui (MIT), JSON — nlohmann/json (MIT), stb (MIT/PD).
+GPL-3.0. Механика переключения и описания платформ основаны на открытом [TcNo Account Switcher](https://github.com/TCNOco/TcNo-Acc-Switcher) (GPL-3.0). Steam Guard совместим с форматом maFile и шифрованием [Steam Desktop Authenticator](https://github.com/Jessecar96/SteamDesktopAuthenticator) (MIT). Шрифты Inter (OFL) и Lucide (ISC), интерфейс — Dear ImGui (MIT), JSON — nlohmann/json (MIT), stb (MIT/PD).

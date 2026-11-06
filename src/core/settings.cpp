@@ -79,6 +79,17 @@ bool Store::load(const std::string& d) {
                 std::string c; rd(*st, "close", c); if (!c.empty()) s.steam_close = close_p(c);
                 rd(*st, "launch", s.steam_launch);
             }
+            if (auto g = j.find("guard"); g != j.end() && g->is_object()) {
+                rd(*g, "poll", s.guard_poll);
+                rd(*g, "poll_sec", s.guard_poll_sec);
+                rd(*g, "auto_market", s.guard_auto_market);
+                rd(*g, "auto_trades", s.guard_auto_trades);
+                rd(*g, "notify", s.guard_notify);
+                rd(*g, "codes_on_cards", s.guard_codes_on_cards);
+                rd(*g, "last", s.guard_last);
+                if (s.guard_poll_sec < 10) s.guard_poll_sec = 10;
+                if (s.guard_poll_sec > 3600) s.guard_poll_sec = 3600;
+            }
             if (auto ps = j.find("platforms"); ps != j.end() && ps->is_object()) {
                 for (auto& [k, v] : ps->items()) {
                     if (!v.is_object()) continue;
@@ -152,6 +163,13 @@ bool Store::save_settings() {
                   {"show_limited", s.steam_show_limited},
                   {"close", close_s(s.steam_close)},
                   {"launch", s.steam_launch}};
+    j["guard"] = {{"poll", s.guard_poll},
+                  {"poll_sec", s.guard_poll_sec},
+                  {"auto_market", s.guard_auto_market},
+                  {"auto_trades", s.guard_auto_trades},
+                  {"notify", s.guard_notify},
+                  {"codes_on_cards", s.guard_codes_on_cards},
+                  {"last", s.guard_last}};
     json ps = json::object();
     for (auto& [k, p] : s.platforms)
         ps[k] = {{"enabled", p.enabled}, {"exe_path", p.exe_path}, {"args", p.args}, {"launch_after", p.launch_after}};

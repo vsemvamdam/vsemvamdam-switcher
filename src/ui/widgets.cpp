@@ -1,6 +1,7 @@
 #include "widgets.h"
 
 #include <cmath>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -293,6 +294,76 @@ void setting_row_end() {
     dl->AddLine(ImVec2(g_row_x, y - S(7)), ImVec2(g_row_x + g_row_w, y - S(7)), P.border, S(1));
     ImGui::SetCursorScreenPos(ImVec2(g_row_x, y));
     ImGui::Dummy(ImVec2(g_row_w, 0));
+}
+
+bool begin_dialog(const char* id, const char* title, float width) {
+    ImGuiIO& io = ImGui::GetIO();
+    ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.45f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(S(width), 0));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(S(26), S(22)));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, S(18));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, S(1));
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, P.surface);
+    bool open = ImGui::BeginPopupModal(id, nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings);
+    ImGui::PopStyleColor();
+    ImGui::PopStyleVar(3);
+    if (open) {
+        ImGui::PushFont(F_SEMI, kBase * 1.25f);
+        ImGui::TextUnformatted(title);
+        ImGui::PopFont();
+        ImGui::Dummy(ImVec2(0, S(4)));
+    }
+    return open;
+}
+
+void dialog_text(const std::string& t) {
+    ImGui::PushStyleColor(ImGuiCol_Text, P.text2);
+    ImGui::PushTextWrapPos(0);
+    ImGui::TextUnformatted(t.c_str());
+    ImGui::PopTextWrapPos();
+    ImGui::PopStyleColor();
+}
+
+// Two buttons right-aligned; returns 1 = primary, 2 = secondary
+int dialog_buttons(const char* primary, const char* secondary, bool primary_enabled, bool danger) {
+    ImGui::Dummy(ImVec2(0, S(10)));
+    float w = ImGui::GetContentRegionAvail().x;
+    float bw = S(132);
+    ImVec2 p = ImGui::GetCursorScreenPos();
+    int r = 0;
+    ImGui::SetCursorScreenPos(ImVec2(p.x + w - bw * 2 - S(10), p.y));
+    if (secondary && pill_button(secondary, false, ImVec2(bw, S(38)))) r = 2;
+    ImGui::SetCursorScreenPos(ImVec2(p.x + w - bw, p.y));
+    if (danger) {
+        ImGui::PushStyleColor(ImGuiCol_Text, P.danger);
+    }
+    if (pill_button(primary, true, ImVec2(bw, S(38)), primary_enabled)) r = 1;
+    if (danger) ImGui::PopStyleColor();
+    if (ImGui::IsKeyPressed(ImGuiKey_Escape)) r = 2;
+    return r;
+}
+
+void dialog_input(const char* id, char* buf, size_t n, const char* hint, bool multiline, int flags) {
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(S(12), S(9)));
+    ImGui::PushStyleColor(ImGuiCol_FrameBg, g_dark ? P.bg : P.bg);
+    ImGui::SetNextItemWidth(-1);
+    if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
+    if (multiline) ImGui::InputTextMultiline(id, buf, n, ImVec2(-1, S(110)), flags);
+    else ImGui::InputTextWithHint(id, hint, buf, n, flags);
+    ImGui::PopStyleColor();
+    ImGui::PopStyleVar();
+}
+
+
+// circular countdown: full ring = whole period, the coloured arc shrinks as time runs out
+void countdown_ring(ImDrawList* dl, ImVec2 c, float r, float remaining_frac, ImU32 col, ImU32 track, float th) {
+    dl->AddCircle(c, r, track, 40, th);
+    float f = remaining_frac < 0 ? 0 : remaining_frac > 1 ? 1 : remaining_frac;
+    if (f <= 0.001f) return;
+    const float pi = 3.14159265f;
+    float a0 = -pi * 0.5f, a1 = a0 + 2 * pi * f;
+    dl->PathArcTo(c, r, a0, a1, 40);
+    dl->PathStroke(col, th);
 }
 
 }  // namespace vs::ui

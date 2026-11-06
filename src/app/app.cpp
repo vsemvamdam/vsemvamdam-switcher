@@ -60,6 +60,7 @@ bool App::init(const std::vector<std::string>& args) {
     log::info("start, data=" + store_.dir);
     apply_language();
     load_platform_defs();
+    guard_init();
     {
         auto& s = store_.settings;
         // Steam is always on; basic platforms are on when enabled in settings
@@ -70,6 +71,7 @@ bool App::init(const std::vector<std::string>& args) {
     }
     for (auto& a : args) {
         if (a == "--tray" || a == "--minimized" || a == "/tray") start_hidden_ = true;
+        if (a == "--guard") page_ = Page::Guard;
     }
     if (store_.settings.start_minimized) start_hidden_ = true;
     // a switch command passed to the first instance is executed once the UI is ready
@@ -134,10 +136,16 @@ void App::before_frame() {
 bool App::animating() const {
     if (busy_) return true;
     if (!toasts_.empty()) return true;
+    if (guard_anim_) return true;  // login flow / confirmations loading spinners
     return false;
 }
 
-bool App::wants_slow_tick() const { return false; }
+int App::tick_ms() const {
+    if (!guard_) return 0;
+    if (page_ == Page::Guard) return guard_->empty() ? 0 : 250;
+    if (page_ == Page::Accounts && cur_ == "steam" && store_.settings.guard_codes_on_cards && !guard_ids_.empty()) return 500;
+    return 0;
+}
 
 Placement App::initial_placement() const {
     Placement p;
@@ -156,6 +164,7 @@ void App::on_window_placement(int x, int y, int w, int h, bool maximized) {
 void App::shutdown() {
     if (worker_.joinable()) worker_.join();  // never exit in the middle of clearing/restoring a login
     if (steam_) steam_->stop_refresh();
+    if (guard_) guard_->stop();
     store_.settings.last_platform = cur_;
     store_.save_settings();
     store_.save_meta();
@@ -411,6 +420,29 @@ bool App::execute_cli(const std::vector<std::string>& args, bool headless, std::
     std::string target, new_pid, app_id;
     for (size_t i = 0; i < args.size(); ++i) {
         const std::string& a = args[i];
+        if (a == "--guard-code" && i + 1 < args.size()) {
+            // copy the current Steam Guard code of an account (login, SteamID64 or custom name)
+            std::string who = args[++i];
+            if (starts_with(to_lower(who), "steam:")) who = who.substr(6);
+            std::string key;
+            uint64_t v = 0;
+            if (guard_) {
+                if (parse_u64(who, v)) key = guard_->key_for_steamid(v);
+                if (key.empty()) key = guard_->key_for_login(who);
+                if (key.empty())
+                    for (auto& g : guard_->list())
+                        if (iequals(guard_name(g), who)) key = g.key;
+            }
+            if (key.empty()) { err = TR("Нет аутентификатора для ", "No authenticator for ") + who; return true; }
+            std::string code = guard_->code(key);
+            os::clipboard_set(code);
+            if (!headless) toast(std::string(TR("Код Steam Guard скопирован: ", "Steam Guard code copied: ")) + code);
+            return true;
+        }
+        if (a == "--guard") {
+            if (!headless) { page_ = Page::Guard; host_show_window(); }
+            return true;
+        }
         if ((a == "--switch" || a == "-s") && i + 1 < args.size()) target = args[++i];
         else if (starts_with(a, "+s:")) target = "steam:" + a.substr(3);
         else if (starts_with(a, "vsemvamdam://")) target = a.substr(13);
@@ -479,7 +511,7 @@ bool App::handle_cli_early(const std::vector<std::string>& args, int& rc) {
 
 bool App::handle_cli_headless(const std::vector<std::string>& args, int& rc) {
     bool has_cmd = std::any_of(args.begin(), args.end(), [](const std::string& a) {
-        return a == "--switch" || a == "--new" || starts_with(a, "+s:") || starts_with(a, "vsemvamdam://");
+        return a == "--switch" || a == "--new" || a == "--guard-code" || starts_with(a, "+s:") || starts_with(a, "vsemvamdam://");
     });
     if (!has_cmd) return false;
     bool keep_open = std::any_of(args.begin(), args.end(), [](const std::string& a) { return a == "--open" || a == "--show"; });
@@ -488,6 +520,10 @@ bool App::handle_cli_headless(const std::vector<std::string>& args, int& rc) {
     log::init(fsx::join(store_.dir, "log.txt"));
     apply_language();
     load_platform_defs();
+    if (std::find(args.begin(), args.end(), "--guard-code") != args.end()) {
+        guard_ = std::make_unique<Guard>(store_);
+        guard_->load(false);
+    }
     std::string err;
     try {
         execute_cli(args, true, err);
@@ -568,6 +604,26 @@ std::vector<TrayEntry> App::tray_menu() {
         nw.text = p->is_steam() ? TR("Добавить аккаунт (экран входа)", "Add account (login screen)") : TR("Новый вход", "New login");
         nw.id = add_action([this, pid] { run_switch(pid, SwitchRequest{}, true); });
         sub.children.push_back(nw);
+        items.push_back(sub);
+    }
+    if (guard_ && !guard_->empty()) {
+        TrayEntry sub;
+        int pending = guard_->pending_total();
+        sub.text = pending > 0 ? std::string("Steam Guard  (") + std::to_string(pending) + ")" : std::string("Steam Guard");
+        for (auto& g : guard_->list()) {
+            TrayEntry e;
+            std::string key = g.key;
+            e.text = std::string(TR("Код: ", "Code: ")) + guard_name(g);
+            if (!g.confs.items.empty()) e.text += "  ·  " + std::to_string(g.confs.items.size());
+            e.id = add_action([this, key] { guard_copy_code(key); });
+            sub.children.push_back(e);
+        }
+        sub.children.push_back(TrayEntry{});
+        TrayEntry op;
+        op.text = TR("Открыть Steam Guard", "Open Steam Guard");
+        op.id = add_action([this] { page_ = Page::Guard; host_show_window(); });
+        sub.children.push_back(op);
+        if (!items.empty()) items.push_back(TrayEntry{});
         items.push_back(sub);
     }
     if (!items.empty()) items.push_back(TrayEntry{});

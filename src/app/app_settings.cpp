@@ -213,6 +213,7 @@ void App::draw_settings_steam() {
     setting_row_end();
 
     if (dirty) store_.save_settings();
+    if (guard_) draw_settings_guard();
 }
 
 void App::draw_settings_platforms() {
@@ -310,9 +311,9 @@ void App::draw_settings_about() {
                               "Ctrl+1…9 — quick sign-in, Ctrl+, — settings."));
     ImGui::Dummy(ImVec2(0, S(8)));
     ImGui::TextUnformatted(TR("Командная строка: --switch steam:<SteamID64|логин>[:online|invisible|offline|away|offlinemode], "
-                              "--switch <платформа>:<id>, --new <платформа>, --run-app <appid>, --tray.",
+                              "--switch <платформа>:<id>, --new <платформа>, --run-app <appid>, --tray, --guard, --guard-code <логин>.",
                               "Command line: --switch steam:<SteamID64|login>[:online|invisible|offline|away|offlinemode], "
-                              "--switch <platform>:<id>, --new <platform>, --run-app <appid>, --tray."));
+                              "--switch <platform>:<id>, --new <platform>, --run-app <appid>, --tray, --guard, --guard-code <login>."));
     ImGui::Dummy(ImVec2(0, S(8)));
     ImGui::TextUnformatted(TR("Лицензия GPL-3.0. Механика переключения и описания платформ основаны на открытом TcNo Account Switcher (GPL-3.0). "
                               "Шрифты Inter (OFL) и Lucide (ISC), интерфейс — Dear ImGui (MIT).",

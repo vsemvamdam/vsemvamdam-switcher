@@ -12,6 +12,7 @@
 #include <shellapi.h>
 #include <shldisp.h>
 #include <shlobj.h>
+#include <shobjidl.h>
 #include <shlwapi.h>
 #include <tlhelp32.h>
 #include <winhttp.h>
@@ -718,58 +719,91 @@ bool dpapi_unprotect(const std::vector<uint8_t>& in, std::vector<uint8_t>& out) 
 }
 
 // ============================================================ Network
-bool http_get(const std::string& url, std::string& body, int* status, uint32_t timeout_ms) {
-    body.clear();
-    if (status) *status = 0;
-    std::wstring wurl = widen(url);
+HttpResponse http_request(const HttpRequest& req) {
+    HttpResponse res;
+    std::wstring wurl = widen(req.url);
     URL_COMPONENTS uc{};
     uc.dwStructSize = sizeof(uc);
-    wchar_t host[256], path[2048];
+    wchar_t host[256], path[4096], extra[8192];
     uc.lpszHostName = host; uc.dwHostNameLength = 256;
-    uc.lpszUrlPath = path; uc.dwUrlPathLength = 2048;
-    if (!WinHttpCrackUrl(wurl.c_str(), 0, 0, &uc)) return false;
-    // WinHttpCrackUrl splits extra info (query) from path only if lpszExtraInfo is provided; include query via remaining
+    uc.lpszUrlPath = path; uc.dwUrlPathLength = 4096;
+    uc.lpszExtraInfo = extra; uc.dwExtraInfoLength = 8192;
+    if (!WinHttpCrackUrl(wurl.c_str(), 0, 0, &uc)) { res.error = "bad url"; return res; }
     std::wstring object(uc.lpszUrlPath, uc.dwUrlPathLength);
-    {
-        size_t q = wurl.find(L'?');
-        if (q != std::wstring::npos && object.find(L'?') == std::wstring::npos) object += wurl.substr(q);
+    object += std::wstring(uc.lpszExtraInfo, uc.dwExtraInfoLength);
+    std::wstring agent = L"vsemvamdam-switcher/1.0";
+    std::wstring hdrs;
+    for (auto& [k, v] : req.headers) {
+        if (iequals(k, "user-agent")) { agent = widen(v); continue; }
+        hdrs += widen(k) + L": " + widen(v) + L"\r\n";
     }
-    HINTERNET s = WinHttpOpen(L"vsemvamdam-switcher/1.0", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME,
-                              WINHTTP_NO_PROXY_BYPASS, 0);
-    if (!s) s = WinHttpOpen(L"vsemvamdam-switcher/1.0", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME,
-                            WINHTTP_NO_PROXY_BYPASS, 0);
-    if (!s) return false;
-    WinHttpSetTimeouts(s, (int)timeout_ms, (int)timeout_ms, (int)timeout_ms, (int)timeout_ms);
-    bool ok = false;
+    HINTERNET s = WinHttpOpen(agent.c_str(), WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+    if (!s) s = WinHttpOpen(agent.c_str(), WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+    if (!s) { res.error = "WinHttpOpen failed"; return res; }
+    int to = (int)req.timeout_ms;
+    WinHttpSetTimeouts(s, to, to, to, to);
     HINTERNET c = WinHttpConnect(s, std::wstring(uc.lpszHostName, uc.dwHostNameLength).c_str(), uc.nPort, 0);
     if (c) {
         DWORD flags = uc.nScheme == INTERNET_SCHEME_HTTPS ? WINHTTP_FLAG_SECURE : 0;
-        HINTERNET r = WinHttpOpenRequest(c, L"GET", object.c_str(), nullptr, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, flags);
+        std::wstring method = widen(req.method);
+        HINTERNET r = WinHttpOpenRequest(c, method.c_str(), object.c_str(), nullptr, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, flags);
         if (r) {
-            if (WinHttpSendRequest(r, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0) &&
-                WinHttpReceiveResponse(r, nullptr)) {
+            // cookies are passed explicitly by the caller; never let WinHTTP keep or replay any
+            DWORD feat = WINHTTP_DISABLE_COOKIES | (req.follow_redirects ? 0 : WINHTTP_DISABLE_REDIRECTS);
+            WinHttpSetOption(r, WINHTTP_OPTION_DISABLE_FEATURE, &feat, sizeof(feat));
+            BOOL sent = WinHttpSendRequest(r, hdrs.empty() ? WINHTTP_NO_ADDITIONAL_HEADERS : hdrs.c_str(), hdrs.empty() ? 0 : (DWORD)-1L,
+                                           req.body.empty() ? WINHTTP_NO_REQUEST_DATA : (LPVOID)req.body.data(), (DWORD)req.body.size(),
+                                           (DWORD)req.body.size(), 0);
+            if (sent && WinHttpReceiveResponse(r, nullptr)) {
                 DWORD code = 0, sz = sizeof(code);
                 WinHttpQueryHeaders(r, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER, WINHTTP_HEADER_NAME_BY_INDEX, &code, &sz,
                                     WINHTTP_NO_HEADER_INDEX);
-                if (status) *status = (int)code;
+                res.status = (int)code;
+                DWORD hsz = 0;
+                WinHttpQueryHeaders(r, WINHTTP_QUERY_RAW_HEADERS_CRLF, WINHTTP_HEADER_NAME_BY_INDEX, nullptr, &hsz, WINHTTP_NO_HEADER_INDEX);
+                if (hsz > 0) {
+                    std::wstring raw(hsz / sizeof(wchar_t) + 1, L'\0');
+                    if (WinHttpQueryHeaders(r, WINHTTP_QUERY_RAW_HEADERS_CRLF, WINHTTP_HEADER_NAME_BY_INDEX, raw.data(), &hsz, WINHTTP_NO_HEADER_INDEX)) {
+                        raw.resize(hsz / sizeof(wchar_t));
+                        for (auto& line : split(narrow(raw), '\n')) {
+                            size_t colon = line.find(':');
+                            if (colon == std::string::npos) continue;
+                            res.headers.push_back({to_lower(trim(line.substr(0, colon))), trim(line.substr(colon + 1))});
+                        }
+                    }
+                }
                 for (;;) {
                     DWORD avail = 0;
                     if (!WinHttpQueryDataAvailable(r, &avail) || avail == 0) break;
-                    size_t old = body.size();
-                    body.resize(old + avail);
+                    size_t old = res.body.size();
+                    res.body.resize(old + avail);
                     DWORD read = 0;
-                    if (!WinHttpReadData(r, body.data() + old, avail, &read)) { body.resize(old); break; }
-                    body.resize(old + read);
-                    if (body.size() > 32 * 1024 * 1024) break;
+                    if (!WinHttpReadData(r, res.body.data() + old, avail, &read)) { res.body.resize(old); break; }
+                    res.body.resize(old + read);
+                    if (res.body.size() > 32 * 1024 * 1024) break;
                 }
-                ok = code >= 200 && code < 300;
+                res.ok = true;
+            } else {
+                res.error = "WinHTTP " + std::to_string(GetLastError());
             }
             WinHttpCloseHandle(r);
         }
         WinHttpCloseHandle(c);
+    } else {
+        res.error = "connect failed";
     }
     WinHttpCloseHandle(s);
-    return ok;
+    return res;
+}
+
+bool http_get(const std::string& url, std::string& body, int* status, uint32_t timeout_ms) {
+    HttpRequest rq;
+    rq.url = url;
+    rq.timeout_ms = timeout_ms;
+    HttpResponse rs = http_request(rq);
+    body = std::move(rs.body);
+    if (status) *status = rs.status;
+    return rs.ok && rs.status >= 200 && rs.status < 300;
 }
 
 // ============================================================ UI
@@ -784,6 +818,64 @@ std::string pick_image_file(void* owner) {
     ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR | OFN_EXPLORER;
     if (!GetOpenFileNameW(&ofn)) return {};
     return narrow(buf);
+}
+
+std::vector<std::string> pick_files(void* owner, const std::string& title, const std::string& filter, bool multi) {
+    std::vector<wchar_t> buf(32768, 0);
+    std::wstring f = widen(filter);
+    for (auto& ch : f)
+        if (ch == L'|') ch = L'\0';
+    f.push_back(L'\0');
+    f.push_back(L'\0');
+    std::wstring t = widen(title);
+    OPENFILENAMEW ofn{};
+    ofn.lStructSize = sizeof(ofn);
+    ofn.hwndOwner = (HWND)owner;
+    ofn.lpstrFilter = f.c_str();
+    ofn.lpstrFile = buf.data();
+    ofn.nMaxFile = (DWORD)buf.size();
+    ofn.lpstrTitle = t.empty() ? nullptr : t.c_str();
+    ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR | OFN_EXPLORER | (multi ? OFN_ALLOWMULTISELECT : 0);
+    std::vector<std::string> out;
+    if (!GetOpenFileNameW(&ofn)) return out;
+    std::wstring first(buf.data());
+    const wchar_t* p = buf.data() + first.size() + 1;
+    if (!*p) {
+        out.push_back(narrow(first));
+    } else {
+        while (*p) {
+            std::wstring name(p);
+            out.push_back(narrow(first + L"\\" + name));
+            p += name.size() + 1;
+        }
+    }
+    return out;
+}
+
+std::string pick_folder(void* owner, const std::string& title) {
+    HRESULT hrInit = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    std::string out;
+    IFileOpenDialog* dlg = nullptr;
+    if (SUCCEEDED(CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dlg))) && dlg) {
+        DWORD opts = 0;
+        dlg->GetOptions(&opts);
+        dlg->SetOptions(opts | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST);
+        if (!title.empty()) dlg->SetTitle(widen(title).c_str());
+        if (SUCCEEDED(dlg->Show((HWND)owner))) {
+            IShellItem* item = nullptr;
+            if (SUCCEEDED(dlg->GetResult(&item)) && item) {
+                PWSTR p = nullptr;
+                if (SUCCEEDED(item->GetDisplayName(SIGDN_FILESYSPATH, &p)) && p) {
+                    out = narrow(p);
+                    CoTaskMemFree(p);
+                }
+                item->Release();
+            }
+        }
+        dlg->Release();
+    }
+    if (SUCCEEDED(hrInit)) CoUninitialize();
+    return out;
 }
 
 void message_box(const std::string& title, const std::string& text, bool error) {

@@ -132,6 +132,8 @@ static void test_steam(const std::string& fake) {
     CHECK(!os::any_running({"steam.exe"}));
 }
 
+#include "test_win_guard.inc"
+
 extern void test_basic(const std::string& root, const std::string& fake);  // defined below
 extern void test_epic(const std::string& root, const std::string& fake);
 
@@ -150,6 +152,8 @@ int wmain() {
     test_basic(g_root, fake);
     std::printf("== epic (new launcher)\n");
     test_epic(g_root, fake);
+    std::printf("== steam guard storage\n");
+    test_guard_store(g_root);
     std::printf("%d passed, %d failed\n", g_pass, g_fail);
     return g_fail ? 1 : 0;
 }

@@ -24,6 +24,8 @@ bool host_is_hidden();
 void host_quit();
 void host_set_theme_dark(bool dark);  // title bar colours
 float host_dpi_scale();
+// Tray balloon / Windows notification (no-op when the tray icon is missing)
+void host_notify(const std::string& title, const std::string& text);
 
 struct TrayEntry {
     int id = 0;               // command id (>0), 0 = separator

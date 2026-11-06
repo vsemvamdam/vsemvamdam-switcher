@@ -47,8 +47,8 @@ static std::string initials(const std::string& name) {
     return f;
 }
 
-static void draw_avatar(ImDrawList* dl, const std::string& path, const std::string& name, const std::string& id, ImVec2 a, float size,
-                        float round_frac) {
+void draw_avatar(ImDrawList* dl, const std::string& path, const std::string& name, const std::string& id, ImVec2 a, float size,
+                 float round_frac) {
     int px = (int)std::ceil(size);
     ImTextureID t = tex_file(path, px > 256 ? 256 : px, round_frac);
     ImVec2 b(a.x + size, a.y + size);
@@ -76,16 +76,35 @@ void App::frame() {
                      ImGuiWindowFlags_NoScrollWithMouse);
     ImGui::PopStyleColor();
 
+    // Steam Guard: which Steam accounts have an authenticator, and whether something is animating
+    guard_ids_.clear();
+    guard_anim_ = false;
+    if (guard_) {
+        for (auto& g : guard_->list()) {
+            if (g.steamid && g.fully_enrolled) guard_ids_[std::to_string(g.steamid)] = g.key;
+            if (g.confs.loading || !g.confs.busy.empty()) guard_anim_ = true;
+        }
+        FlowStep fs = guard_->flow().step;
+        if (fs == FlowStep::Working || fs == FlowStep::WaitConfirmation) guard_anim_ = true;
+    }
+
+    if (page_ == Page::Guard && last_page_ != Page::Guard) guard_fetched_sel_.clear();  // refresh confirmations on every visit
+    last_page_ = page_;
+
     float sw = S(236);
     float W = io.DisplaySize.x, H = io.DisplaySize.y;
     draw_sidebar(sw, H);
     if (page_ == Page::Settings) {
         draw_settings(sw, 0, W - sw, H);
+    } else if (page_ == Page::Guard && guard_) {
+        draw_guard(sw, 0, W - sw, H);
     } else {
+        page_ = Page::Accounts;
         draw_accounts(sw, 0, W - sw, H);
     }
     draw_context_menu();
     draw_dialogs();
+    if (guard_) draw_guard_dialogs();
     draw_toasts();
 
     // global shortcuts
@@ -177,7 +196,9 @@ void App::draw_sidebar(float w, float h) {
         dl->AddText(F_REG, S(kBase * 0.95f), ImVec2(pos.x + S(40), pos.y + S(9)), hov ? P.text : P.text3, TR("Добавить платформу", "Add platform"));
         if (clicked) { page_ = Page::Settings; settings_tab_ = 2; }
         if (hov) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+        ImGui::SetCursorScreenPos(ImVec2(pos.x, pos.y + S(36)));
     }
+    if (guard_) draw_sidebar_guard(iw);
     ImGui::EndGroup();
 
     // bottom: settings
@@ -454,7 +475,10 @@ void App::draw_grid(const std::vector<Account>& list, float avail) {
         }
         bool dragging_me = ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left);
         ImGui::PopID();
-        handle_card_input(cur_, a, hov && !dragging_me);
+        bool show_chip = cur_ == "steam" && guard_ && store_.settings.guard_codes_on_cards && guard_ids_.count(a.id);
+        ImVec2 chip_pos(p0.x + S(22) + S(6), p0.y + S(18) + (cw - S(44)) - S(28));
+        bool on_chip = show_chip && hov && ImGui::IsMouseHoveringRect(chip_pos, ImVec2(chip_pos.x + S(110), chip_pos.y + S(22)));
+        handle_card_input(cur_, a, hov && !dragging_me && !on_chip);
         float hv = anim(iid, hov, 14.0f);
         bool sel = selected_ == a.id;
         bool busy_me = busy_ && busy_account_ == a.id && busy_platform_ == cur_;
@@ -474,6 +498,7 @@ void App::draw_grid(const std::vector<Account>& list, float avail) {
             dl->AddRectFilled(ap, ImVec2(ap.x + av, ap.y + av), with_alpha(P.surface, 0.72f), av * 0.16f);
             spinner(dl, ImVec2(ap.x + av * 0.5f, ap.y + av * 0.5f), av * 0.16f, P.text, S(2.5f));
         }
+        if (show_chip && !busy_me) guard_chip(a.id, ImVec2(ap.x + S(6), ap.y + av - S(28)), hov);
         // badges
         float bx = ap.x + S(6), by = ap.y + S(6);
         auto put_badge = [&](const char* t, ImU32 fg, ImU32 bg) {
@@ -562,7 +587,17 @@ void App::draw_list(const std::vector<Account>& list, float avail) {
             ImGui::EndDragDropTarget();
         }
         ImGui::PopID();
-        handle_card_input(cur_, a, hov);
+        bool list_chip = cur_ == "steam" && guard_ && store_.settings.guard_codes_on_cards && guard_ids_.count(a.id);
+        ImVec2 lchip;
+        {
+            float r0 = p0.x + avail - S(14);
+            if (hov && !busy_) r0 -= S(92) + S(14);
+            std::string w0 = a.last_login ? ago(a.last_login) : std::string();
+            float wsx = F_REG->CalcTextSizeA(S(kBase * 0.85f), FLT_MAX, 0, w0.c_str()).x;
+            lchip = ImVec2(r0 - wsx - S(128), p0.y + (rh - S(6) - S(22)) * 0.5f);
+        }
+        bool on_lchip = list_chip && hov && ImGui::IsMouseHoveringRect(lchip, ImVec2(lchip.x + S(110), lchip.y + S(22)));
+        handle_card_input(cur_, a, hov && !on_lchip);
         float hv = anim(iid, hov, 16.0f);
         bool sel = selected_ == a.id;
         ImVec2 p1(p0.x + avail, p0.y + rh - S(6));
@@ -613,6 +648,7 @@ void App::draw_list(const std::vector<Account>& list, float avail) {
             right -= bw + S(14);
         }
         dl->AddText(F_REG, S(kBase * 0.85f), ImVec2(right - ws.x, p0.y + (rh - S(6) - ws.y) * 0.5f), P.text3, when.c_str());
+        if (list_chip) guard_chip(a.id, lchip, hov);
         if (hov) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
         ImGui::SetCursorScreenPos(ImVec2(p0.x, p0.y + rh));
     }
@@ -760,6 +796,29 @@ void App::account_menu_items(const std::string& pid, const Account& a) {
             ImGui::PopStyleVar();
             ImGui::EndMenu();
         }
+        if (guard_) {
+            auto git = guard_ids_.find(a.id);
+            if (begin_menu(ICON_SHIELD, "Steam Guard")) {
+                if (git != guard_ids_.end()) {
+                    std::string key = git->second;
+                    std::string code = guard_->code(key);
+                    std::string l = std::string(TR("Копировать код", "Copy code")) + (store_.settings.streamer_mode ? std::string() : "   " + code);
+                    if (ImGui::MenuItem(l.c_str())) guard_copy_code(key);
+                    GuardView gv;
+                    guard_->view(key, gv);
+                    std::string cl = std::string(TR("Подтверждения", "Confirmations")) + (gv.confs.items.empty() ? std::string() : "  (" + std::to_string(gv.confs.items.size()) + ")");
+                    if (ImGui::MenuItem(cl.c_str())) guard_open(key);
+                } else {
+                    if (ImGui::MenuItem(TR("Привязать аутентификатор…", "Link an authenticator…"))) {
+                        guard_->flow_reset();
+                        open_gdialog(GDlg::Link, "");
+                        snprintf(g_buf1_, sizeof(g_buf1_), "%s", a.login.c_str());
+                    }
+                    if (ImGui::MenuItem(TR("Импорт maFile…", "Import maFile…"))) guard_pick_import(false);
+                }
+                ImGui::EndMenu();
+            }
+        }
     }
     ImGui::Separator();
     if (begin_menu(ICON_COPY, TR("Копировать", "Copy"))) {
@@ -872,64 +931,6 @@ void App::draw_context_menu() {
 }
 
 // ================================================================ dialogs
-static bool begin_dialog(const char* id, const char* title, float width) {
-    ImGuiIO& io = ImGui::GetIO();
-    ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.45f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(ImVec2(S(width), 0));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(S(26), S(22)));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, S(18));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, S(1));
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, P.surface);
-    bool open = ImGui::BeginPopupModal(id, nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings);
-    ImGui::PopStyleColor();
-    ImGui::PopStyleVar(3);
-    if (open) {
-        ImGui::PushFont(F_SEMI, kBase * 1.25f);
-        ImGui::TextUnformatted(title);
-        ImGui::PopFont();
-        ImGui::Dummy(ImVec2(0, S(4)));
-    }
-    return open;
-}
-
-static void dialog_text(const std::string& t) {
-    ImGui::PushStyleColor(ImGuiCol_Text, P.text2);
-    ImGui::PushTextWrapPos(0);
-    ImGui::TextUnformatted(t.c_str());
-    ImGui::PopTextWrapPos();
-    ImGui::PopStyleColor();
-}
-
-// Two buttons right-aligned; returns 1 = primary, 2 = secondary
-static int dialog_buttons(const char* primary, const char* secondary, bool primary_enabled = true, bool danger = false) {
-    ImGui::Dummy(ImVec2(0, S(10)));
-    float w = ImGui::GetContentRegionAvail().x;
-    float bw = S(132);
-    ImVec2 p = ImGui::GetCursorScreenPos();
-    int r = 0;
-    ImGui::SetCursorScreenPos(ImVec2(p.x + w - bw * 2 - S(10), p.y));
-    if (secondary && pill_button(secondary, false, ImVec2(bw, S(38)))) r = 2;
-    ImGui::SetCursorScreenPos(ImVec2(p.x + w - bw, p.y));
-    if (danger) {
-        ImGui::PushStyleColor(ImGuiCol_Text, P.danger);
-    }
-    if (pill_button(primary, true, ImVec2(bw, S(38)), primary_enabled)) r = 1;
-    if (danger) ImGui::PopStyleColor();
-    if (ImGui::IsKeyPressed(ImGuiKey_Escape)) r = 2;
-    return r;
-}
-
-static void dialog_input(const char* id, char* buf, size_t n, const char* hint, bool multiline = false) {
-    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(S(12), S(9)));
-    ImGui::PushStyleColor(ImGuiCol_FrameBg, g_dark ? P.bg : P.bg);
-    ImGui::SetNextItemWidth(-1);
-    if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
-    if (multiline) ImGui::InputTextMultiline(id, buf, n, ImVec2(-1, S(110)));
-    else ImGui::InputTextWithHint(id, hint, buf, n);
-    ImGui::PopStyleColor();
-    ImGui::PopStyleVar();
-}
-
 void App::draw_dialogs() {
     const char* ids[] = {"", "##dlg_rename", "##dlg_note", "##dlg_forget", "##dlg_save", "##dlg_new", "##dlg_admin", "##dlg_about", "##dlg_short", "##dlg_game"};
     if (dlg_ != Dlg::None && dlg_open_req_) {

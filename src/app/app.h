@@ -9,12 +9,17 @@
 #include <vector>
 
 #include "../core/settings.h"
+#include "guard.h"
 #include "host.h"
+#include "imgui.h"
 #include "platform.h"
 
 namespace vs {
 
 class SteamPlatform;
+
+// avatar image with an initials placeholder (app_ui.cpp)
+void draw_avatar(ImDrawList* dl, const std::string& path, const std::string& name, const std::string& id, ImVec2 a, float size, float round_frac);
 
 struct Placement {
     int x = 0, y = 0, w = 0, h = 0;
@@ -34,9 +39,11 @@ public:
     void before_frame();
     void frame();
     bool animating() const;
-    bool wants_slow_tick() const;
+    int tick_ms() const;  // >0: redraw at least this often (code countdowns)
     void on_external_command(const std::string& cmdline);
     void on_activated();
+    void on_drop_files(const std::vector<std::string>& paths);
+    void on_notify_click();
     std::vector<TrayEntry> tray_menu();
     void on_tray_command(int id);
     bool close_to_tray() const { return store_.settings.close_to_tray; }
@@ -52,6 +59,7 @@ private:
     std::vector<std::unique_ptr<Platform>> all_;       // every known platform (Steam first)
     SteamPlatform* steam_ = nullptr;
     std::map<std::string, std::vector<Account>> accounts_;
+    std::unique_ptr<Guard> guard_;
     std::string cur_;          // current platform id
     std::string selected_;     // selected account id
     bool start_hidden_ = false;
@@ -67,7 +75,7 @@ private:
     std::thread worker_;
 
     // ---- UI state
-    enum class Page { Accounts, Settings };
+    enum class Page { Accounts, Settings, Guard };
     Page page_ = Page::Accounts;
     char search_[128] = {};
     std::string ctx_account_;   // account for context menu
@@ -99,6 +107,33 @@ private:
     float dpi_ = 1.0f;
     char path_buf_[512] = {};
     char args_buf_[512] = {};
+
+    // ---- Steam Guard UI state
+    enum class GDlg { None, Passkey, Login, Link, Revocation, Export, RemoveLocal, Deactivate, RespondAll, ImportErrors };
+    GDlg gdlg_ = GDlg::None;
+    bool gdlg_open_req_ = false;
+    std::string gdlg_key_;
+    std::vector<std::string> gdlg_keys_;      // export: several accounts
+    char g_buf1_[256] = {};
+    char g_buf2_[256] = {};
+    char g_buf3_[64] = {};
+    bool g_check_ = false;
+    int g_choice_ = 1;
+    bool g_accept_ = true;
+    std::string g_error_;
+    std::vector<std::string> g_retry_;        // paths waiting for the SDA passkey
+    std::vector<std::string> g_import_errors_;
+    std::string g_export_folder_;
+    std::vector<std::string> g_sda_found_;
+    bool g_sda_scanned_ = false;
+    std::string guard_sel_;
+    std::string guard_fetched_sel_;
+    std::string gctx_key_;
+    bool gctx_open_ = false;
+    char guard_search_[128] = {};
+    std::map<std::string, std::string> guard_ids_;  // SteamID64 -> guard key (refreshed every frame)
+    bool guard_anim_ = false;
+    Page last_page_ = Page::Accounts;
 
     // ---- helpers
     Platform* platform(const std::string& id);
@@ -139,6 +174,26 @@ private:
     void draw_settings_platforms();
     void draw_settings_about();
     void account_menu_items(const std::string& pid, const Account& a);
+    // Steam Guard
+    void guard_init();
+    void guard_event(const GuardEvent& e);
+    void guard_import(const std::vector<std::string>& paths, const std::string& passkey);
+    void guard_pick_import(bool folder);
+    void guard_start_export(const std::vector<std::string>& keys);
+    void guard_copy_code(const std::string& key);
+    void guard_open(const std::string& key);
+    std::string guard_name(const GuardView& v);
+    std::string guard_avatar(uint64_t steamid);
+    void open_gdialog(GDlg d, const std::string& key);
+    void draw_guard(float x, float y, float w, float h);
+    void draw_guard_empty(float x, float y, float w, float h);
+    void draw_guard_detail(const GuardView& v, float w);
+    void draw_guard_dialogs();
+    void draw_guard_flow_dialog();
+    void guard_menu_items(const GuardView& v);
+    void draw_settings_guard();
+    bool guard_chip(const std::string& id64, ImVec2 pos, bool card_hovered);  // returns true when clicked
+    void draw_sidebar_guard(float iw);
     bool handle_card_input(const std::string& pid, const Account& a, bool hovered);
 };
 

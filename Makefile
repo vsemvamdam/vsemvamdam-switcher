@@ -24,9 +24,10 @@ LIBS     := -ld3d11 -ldxgi -ld3dcompiler -ldwmapi -lshcore -lwinhttp -lshell32 -
             -luuid -ladvapi32 -luser32 -lgdi32 -limm32 -lcomctl32 -lcomdlg32 -lcrypt32
 
 CORE_SRC := src/core/str.cpp src/core/vdf.cpp src/core/fsx.cpp src/core/image.cpp src/core/steam_core.cpp \
-            src/core/log.cpp src/core/settings.cpp src/core/i18n.cpp src/core/basic_core.cpp
+            src/core/log.cpp src/core/settings.cpp src/core/i18n.cpp src/core/basic_core.cpp \
+            src/core/crypto.cpp src/core/guard_core.cpp
 APP_SRC  := src/main.cpp src/os/win.cpp src/app/app.cpp src/app/app_ui.cpp src/app/app_settings.cpp \
-            src/app/steam_platform.cpp src/app/basic_platform.cpp src/app/platform.cpp src/ui/theme.cpp src/ui/widgets.cpp src/ui/textures.cpp
+            src/app/steam_platform.cpp src/app/basic_platform.cpp src/app/platform.cpp src/app/guard.cpp src/app/app_guard.cpp src/ui/theme.cpp src/ui/widgets.cpp src/ui/textures.cpp
 IMGUI_SRC := third_party/imgui/imgui.cpp third_party/imgui/imgui_draw.cpp third_party/imgui/imgui_tables.cpp \
              third_party/imgui/imgui_widgets.cpp third_party/imgui/backends/imgui_impl_win32.cpp \
              third_party/imgui/backends/imgui_impl_dx11.cpp
@@ -49,7 +50,7 @@ $(EXE): $(OBJ)
 
 # ---- portable unit tests (host compiler)
 TEST_SRC := tests/test_core.cpp src/core/str.cpp src/core/vdf.cpp src/core/fsx.cpp src/core/image.cpp \
-            src/core/steam_core.cpp src/core/log.cpp src/core/basic_core.cpp
+            src/core/steam_core.cpp src/core/log.cpp src/core/basic_core.cpp src/core/crypto.cpp src/core/guard_core.cpp
 test:
 	@mkdir -p $(OUT)
 	$(HOSTCXX) -std=c++20 -O1 -g -Wall -Ithird_party -Ithird_party/stb $(TEST_SRC) -o $(OUT)/test_core
@@ -58,9 +59,11 @@ test:
 # ---- Windows integration test (exercises registry, processes, files) — run with: wine build/wintest.exe
 wintest:
 	@mkdir -p $(OUT)
-	$(CXX) $(CXXFLAGS) tests/test_win.cpp src/os/win.cpp src/core/*.cpp src/app/steam_platform.cpp src/app/basic_platform.cpp src/app/platform.cpp \
+	$(CXX) $(CXXFLAGS) tests/test_win.cpp src/os/win.cpp src/core/*.cpp src/app/steam_platform.cpp src/app/basic_platform.cpp src/app/platform.cpp src/app/guard.cpp \
 	  tests/stub_host.cpp -o $(OUT)/wintest.exe -static -municode $(LIBS) -lcomdlg32 -lcrypt32
 	$(CXX) -O2 -static tests/fake_client.cpp -o $(OUT)/fake_client.exe
+	$(CXX) $(CXXFLAGS) tests/net_probe.cpp src/os/win.cpp src/core/*.cpp src/app/guard.cpp tests/stub_host.cpp \
+	  -o $(OUT)/net_probe.exe -static -municode $(LIBS)
 
 clean:
 	rm -rf $(OUT)

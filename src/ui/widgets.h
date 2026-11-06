@@ -25,5 +25,12 @@ void section_label(const char* text);
 void setting_row_begin(const char* title, const char* desc, float control_w);
 void setting_row_end();
 float anim(ImGuiID id, bool target, float speed = 12.0f);  // smooth 0..1 animation
+void countdown_ring(ImDrawList* dl, ImVec2 center, float radius, float remaining_frac, ImU32 col, ImU32 track, float thickness);
+// modal dialogs (centered card)
+bool begin_dialog(const char* id, const char* title, float width);
+void dialog_text(const std::string& t);
+// Two buttons right-aligned; returns 1 = primary, 2 = secondary (also Esc)
+int dialog_buttons(const char* primary, const char* secondary, bool primary_enabled = true, bool danger = false);
+void dialog_input(const char* id, char* buf, size_t n, const char* hint, bool multiline = false, int flags = 0);
 
 }  // namespace vs::ui

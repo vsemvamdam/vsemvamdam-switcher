@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <functional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace vs::os {
@@ -110,9 +111,35 @@ bool dpapi_unprotect(const std::vector<uint8_t>& in, std::vector<uint8_t>& out);
 // HTTP(S) GET; returns false on failure. status receives HTTP status code.
 bool http_get(const std::string& url, std::string& body, int* status = nullptr, uint32_t timeout_ms = 8000);
 
+struct HttpRequest {
+    std::string method = "GET";
+    std::string url;
+    std::vector<std::pair<std::string, std::string>> headers;  // name, value
+    std::string body;
+    uint32_t timeout_ms = 15000;
+    bool follow_redirects = true;
+};
+struct HttpResponse {
+    bool ok = false;      // transport succeeded (any HTTP status)
+    int status = 0;
+    std::string body;
+    std::vector<std::pair<std::string, std::string>> headers;  // lower-cased names
+    std::string error;    // transport error text
+    std::string header(const std::string& lower_name) const {
+        for (auto& [k, v] : headers)
+            if (k == lower_name) return v;
+        return {};
+    }
+};
+HttpResponse http_request(const HttpRequest& r);
+
 // ---------- UI helpers ----------
 // Standard "Open file" dialog for images; returns "" if cancelled.
 std::string pick_image_file(void* owner);
+// Multi-select "Open file" dialog. filter is a Win32 filter list with '|' separators: "maFile|*.maFile;*.json|All|*.*".
+std::vector<std::string> pick_files(void* owner, const std::string& title, const std::string& filter, bool multi);
+// Folder picker; returns "" if cancelled.
+std::string pick_folder(void* owner, const std::string& title);
 void message_box(const std::string& title, const std::string& text, bool error = false);
 
 }  // namespace vs::os

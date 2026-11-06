@@ -1,5 +1,6 @@
 // Stubs of the UI host for headless integration tests
 #include <functional>
+#include <string>
 #include "../src/app/host.h"
 namespace vs {
 void ui_wake() {}
@@ -13,4 +14,5 @@ bool host_is_hidden() { return true; }
 void host_quit() {}
 void host_set_theme_dark(bool) {}
 float host_dpi_scale() { return 1.0f; }
+void host_notify(const std::string&, const std::string&) {}
 }

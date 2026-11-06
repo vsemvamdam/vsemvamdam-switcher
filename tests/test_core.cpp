@@ -1,6 +1,8 @@
 // Unit tests for portable core (run on Linux: make test)
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <string>
 
 #include "../src/core/basic_core.h"
@@ -24,6 +26,8 @@ static int g_fail = 0, g_pass = 0;
     } while (0)
 
 using namespace vs;
+
+#include "test_guard.inc"
 
 static const char* kLoginUsers =
     "\xEF\xBB\xBF\"users\"\n{\n"
@@ -277,6 +281,8 @@ int main() {
     test_xml();
     test_str();
     test_image();
+    test_crypto();
+    test_guard();
     std::printf("%d passed, %d failed\n", g_pass, g_fail);
     return g_fail ? 1 : 0;
 }

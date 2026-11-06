@@ -45,6 +45,14 @@ struct Settings {
     bool steam_show_limited = true;
     SteamClose steam_close = SteamClose::Fast;
     bool steam_launch = true;
+    // steam guard (mobile authenticator)
+    bool guard_poll = false;          // check confirmations in the background
+    int guard_poll_sec = 60;
+    bool guard_auto_market = false;   // accept market listings automatically
+    bool guard_auto_trades = false;   // accept trade offers automatically
+    bool guard_notify = true;         // tray notification about new confirmations
+    bool guard_codes_on_cards = true; // show the current code on Steam account cards
+    std::string guard_last;           // last selected authenticator
     // other platforms
     std::map<std::string, PlatformPrefs> platforms;
 };

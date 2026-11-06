@@ -218,8 +218,24 @@ LRESULT WINAPI WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 case WM_CONTEXTMENU:
                     show_tray_menu();
                     break;
+                case NIN_BALLOONUSERCLICK:
+                    show_window();
+                    vs::ui_post([] { vs::App::get().on_notify_click(); });
+                    break;
             }
             return 0;
+        case WM_DROPFILES: {
+            HDROP drop = (HDROP)wp;
+            UINT n = DragQueryFileW(drop, 0xFFFFFFFF, nullptr, 0);
+            std::vector<std::string> files;
+            for (UINT i = 0; i < n; ++i) {
+                wchar_t buf[MAX_PATH * 2];
+                if (DragQueryFileW(drop, i, buf, MAX_PATH * 2)) files.push_back(vs::narrow(buf));
+            }
+            DragFinish(drop);
+            if (!files.empty()) vs::ui_post([files] { vs::App::get().on_drop_files(files); });
+            return 0;
+        }
         case WM_COPYDATA: {
             auto* cds = reinterpret_cast<COPYDATASTRUCT*>(lp);
             if (cds && cds->dwData == kCopyDataTag && cds->lpData) {
@@ -322,6 +338,20 @@ void host_set_theme_dark(bool dark) {
     apply_titlebar();
 }
 float host_dpi_scale() { return g_dpi_scale; }
+void host_notify(const std::string& title, const std::string& text) {
+    if (!g_hwnd) return;
+    NOTIFYICONDATAW nid{};
+    nid.cbSize = sizeof(nid);
+    nid.hWnd = g_hwnd;
+    nid.uID = kTrayUid;
+    nid.uFlags = NIF_INFO;
+    nid.dwInfoFlags = NIIF_USER | NIIF_LARGE_ICON;
+    nid.hBalloonIcon = (HICON)LoadImageW(g_hinst, MAKEINTRESOURCEW(1), IMAGE_ICON, 32, 32, 0);
+    std::wstring t = widen(title), b = widen(text);
+    wcsncpy_s(nid.szInfoTitle, t.c_str(), _TRUNCATE);
+    wcsncpy_s(nid.szInfo, b.c_str(), _TRUNCATE);
+    Shell_NotifyIconW(NIM_MODIFY, &nid);
+}
 }  // namespace vs
 
 int WINAPI wWinMain(HINSTANCE hinst, HINSTANCE, PWSTR, int nShow) {
@@ -398,6 +428,11 @@ int WINAPI wWinMain(HINSTANCE hinst, HINSTANCE, PWSTR, int nShow) {
     app.on_ready(g_dpi_scale);
     apply_titlebar();
     tray_add();
+    DragAcceptFiles(g_hwnd, TRUE);
+    // let files be dropped from a non-elevated Explorer when we run as administrator
+    ChangeWindowMessageFilterEx(g_hwnd, WM_DROPFILES, MSGFLT_ALLOW, nullptr);
+    ChangeWindowMessageFilterEx(g_hwnd, WM_COPYDATA, MSGFLT_ALLOW, nullptr);
+    ChangeWindowMessageFilterEx(g_hwnd, 0x0049 /*WM_COPYGLOBALDATA*/, MSGFLT_ALLOW, nullptr);
 
     bool start_hidden = app.start_hidden();
     if (!start_hidden) {
@@ -412,8 +447,10 @@ int WINAPI wWinMain(HINSTANCE hinst, HINSTANCE, PWSTR, int nShow) {
         bool animate = app.animating();
         if (g_force_frames.load() <= 0 && !animate) {
             DWORD timeout = INFINITE;
-            if (!g_hidden && !g_minimized && ImGui::GetCurrentContext() && (ImGui::IsAnyItemHovered() || app.wants_slow_tick()))
-                timeout = 60;
+            if (!g_hidden && !g_minimized && ImGui::GetCurrentContext()) {
+                if (ImGui::IsAnyItemHovered()) timeout = 60;
+                else if (int t = app.tick_ms(); t > 0) timeout = (DWORD)t;  // e.g. Steam Guard code countdown
+            }
             MsgWaitForMultipleObjectsEx(0, nullptr, timeout, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
         }
         MSG msg;
