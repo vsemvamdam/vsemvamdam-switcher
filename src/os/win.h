@@ -64,6 +64,16 @@ bool is_elevated();
 bool launch(const std::string& exe, const std::string& args, const std::string& workdir, bool unelevated = true);
 bool shell_open(const std::string& target, const std::string& args = "");
 bool relaunch_self_elevated(const std::string& args);
+// Child processes that never outlive the switcher (kill-on-close job object).
+struct Child {
+    void* process = nullptr;
+    uint32_t pid = 0;
+};
+bool spawn_child(const std::string& exe, const std::string& args, Child& out);
+bool child_wait(Child& c, uint32_t timeout_ms, uint32_t* exit_code = nullptr);  // true once the process has exited
+bool child_running(const Child& c);
+void child_kill(Child& c);   // terminate (if still running) and close the handle
+uint32_t current_pid();
 std::string self_exe_path();
 
 // ---------- Paths ----------

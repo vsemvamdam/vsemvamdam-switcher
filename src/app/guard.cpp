@@ -239,6 +239,31 @@ void Guard::load(bool start_threads) {
             items_[it.key] = std::move(it);
         }
         log::info("guard: " + std::to_string(items_.size()) + " authenticator(s)");
+        sessions_.clear();
+        std::string sdir = fsx::join(dir(), "sessions");
+        for (auto& name : fsx::list_dir(sdir)) {
+            if (!ends_with(to_lower(name), ".vssession")) continue;
+            std::string raw;
+            if (!fsx::read_file(fsx::join(sdir, name), raw)) continue;
+            std::vector<uint8_t> in(raw.begin(), raw.end()), out;
+            if (!os::dpapi_unprotect(in, out)) continue;
+            json j = json::parse(std::string(out.begin(), out.end()), nullptr, false);
+            crypto::wipe(out);
+            if (!j.is_object()) continue;
+            WebSession w;
+            uint64_t sid = 0;
+            try {
+                parse_u64(j.value("steamid", std::string()), sid);
+                w.account_name = j.value("account_name", std::string());
+                w.session.access_token = j.value("access_token", std::string());
+                w.session.refresh_token = j.value("refresh_token", std::string());
+                w.session.session_id = j.value("session_id", std::string());
+            } catch (...) {
+                continue;
+            }
+            w.session.steamid = sid;
+            if (sid && !w.session.refresh_token.empty()) sessions_[sid] = w;
+        }
     }
     if (!start_threads) return;
     stop_ = false;
@@ -1013,6 +1038,130 @@ void Guard::respond(const std::string& key, const std::vector<std::string>& ids,
     });
 }
 
+// ============================================================ web sessions
+bool Guard::save_session_locked(uint64_t steamid) {
+    auto it = sessions_.find(steamid);
+    if (it == sessions_.end()) return false;
+    json j = {{"steamid", std::to_string(steamid)}, {"account_name", it->second.account_name}, {"access_token", it->second.session.access_token},
+              {"refresh_token", it->second.session.refresh_token}, {"session_id", it->second.session.session_id}};
+    std::string text = j.dump();
+    std::vector<uint8_t> in(text.begin(), text.end()), out;
+    crypto::wipe(text);
+    bool ok = os::dpapi_protect(in, out);
+    crypto::wipe(in);
+    if (!ok) return false;
+    std::string sdir = fsx::join(dir(), "sessions");
+    fsx::mkdirs(sdir);
+    return fsx::write_file_atomic(fsx::join(sdir, std::to_string(steamid) + ".vssession"), std::string(out.begin(), out.end()));
+}
+
+bool Guard::has_web_session(uint64_t steamid) {
+    if (!steamid) return false;
+    std::lock_guard<std::mutex> lk(mtx_);
+    auto now = unix_now();
+    for (auto& [k, it] : items_) {
+        if (it.acc.steamid != steamid || it.acc.session.refresh_token.empty() || it.confs.needauth) continue;
+        int64_t e = guard::jwt_exp(it.acc.session.refresh_token);
+        if (!e || e > now + 60) return true;
+    }
+    auto s = sessions_.find(steamid);
+    if (s == sessions_.end()) return false;
+    int64_t e = guard::jwt_exp(s->second.session.refresh_token);
+    return !e || e > now + 60;
+}
+
+std::string Guard::web_session_name(uint64_t steamid) {
+    std::lock_guard<std::mutex> lk(mtx_);
+    for (auto& [k, it] : items_)
+        if (it.acc.steamid == steamid) return it.acc.account_name;
+    auto s = sessions_.find(steamid);
+    return s == sessions_.end() ? std::string() : s->second.account_name;
+}
+
+void Guard::forget_web_session(uint64_t steamid) {
+    std::lock_guard<std::mutex> lk(mtx_);
+    sessions_.erase(steamid);
+    fsx::remove_file(fsx::join(fsx::join(dir(), "sessions"), std::to_string(steamid) + ".vssession"));
+}
+
+bool Guard::web_session(uint64_t steamid, guard::Session& out, bool force) {
+    std::string key = key_for_steamid(steamid);
+    if (!key.empty()) {
+        guard::Account a;
+        if (ensure_session(key, force, a) == Sess::Ok) {
+            out = a.session;
+            if (!out.steamid) out.steamid = steamid;
+            return true;
+        }
+    }
+    WebSession w;
+    {
+        std::lock_guard<std::mutex> lk(mtx_);
+        auto it = sessions_.find(steamid);
+        if (it == sessions_.end()) return false;
+        if (it->second.session.session_id.empty()) {
+            it->second.session.session_id = random_session_id();
+            save_session_locked(steamid);
+        }
+        w = it->second;
+    }
+    int64_t now = unix_now();
+    int64_t exp_r = guard::jwt_exp(w.session.refresh_token);
+    if (w.session.refresh_token.empty() || (exp_r && exp_r <= now + 60)) return false;
+    if (!force && !w.session.access_token.empty() && guard::jwt_exp(w.session.access_token) > now + 120) {
+        out = w.session;
+        return true;
+    }
+    bool renew = exp_r && exp_r < now + 30 * 86400;
+    Api r = call_form(std::string(kApi) + "IAuthenticationService/GenerateAccessTokenForApp/v1/",
+                      {{"refresh_token", w.session.refresh_token}, {"steamid", std::to_string(steamid)}, {"renewal_type", renew ? "1" : "0"}});
+    std::string access, refresh;
+    if (!r.net_ok || r.http != 200 || r.eresult != 1 || !guard::parse_access_token(r.body, access, refresh)) return false;
+    std::lock_guard<std::mutex> lk(mtx_);
+    auto it = sessions_.find(steamid);
+    if (it == sessions_.end()) return false;
+    if (it->second.session.refresh_token == w.session.refresh_token) {
+        it->second.session.access_token = access;
+        if (!refresh.empty()) it->second.session.refresh_token = refresh;
+        save_session_locked(steamid);
+    }
+    out = it->second.session;
+    return true;
+}
+
+bool Guard::community_get(uint64_t steamid, const std::string& path_query, std::string& body, int& status) {
+    body.clear();
+    status = 0;
+    for (int attempt = 0; attempt < 2; ++attempt) {
+        guard::Session s;
+        if (!web_session(steamid, s, attempt == 1)) return false;
+        guard::Account a;
+        a.steamid = steamid;
+        a.session = s;
+        os::HttpResponse r = community(a, "GET", path_query, "");
+        if (!r.ok) return false;
+        status = r.status;
+        if (r.status >= 300 && r.status < 400 && attempt == 0) continue;  // signed out: refresh the token and retry
+        body = std::move(r.body);
+        return r.status == 200;
+    }
+    return false;
+}
+
+bool Guard::webapi_get(uint64_t steamid, const std::string& url, std::string& body, int& status) {
+    guard::Session s;
+    body.clear();
+    status = 0;
+    if (!web_session(steamid, s, false)) return false;
+    os::HttpRequest rq;
+    rq.url = url + "&access_token=" + guard::url_encode(s.access_token);
+    rq.headers = {{"User-Agent", kDalvikUA}, {"Accept", "application/json"}};
+    os::HttpResponse r = os::http_request(rq);
+    status = r.status;
+    body = std::move(r.body);
+    return r.ok && r.status == 200;
+}
+
 // ============================================================ flows
 FlowState Guard::flow() {
     std::lock_guard<std::mutex> lk(fmtx_);
@@ -1082,6 +1231,25 @@ void Guard::flow_login(const std::string& key, const std::string& password) {
         fs_ = FlowState{};
         fs_.kind = FlowKind::Login;
         fs_.key = key;
+        fs_.account_name = login;
+        fs_.step = FlowStep::Working;
+        fs_.message = TR("Вход в Steam…", "Signing in to Steam…");
+        pend_ = Pending{};
+        pend_.login = login;
+    }
+    emit({});
+    std::string pw = password;
+    run_flow([this, login, pw](int gen) mutable {
+        login_begin(login, pw, gen);
+        crypto::wipe(pw);
+    });
+}
+
+void Guard::flow_session(const std::string& login, const std::string& password) {
+    {
+        std::lock_guard<std::mutex> lk(fmtx_);
+        fs_ = FlowState{};
+        fs_.kind = FlowKind::Session;
         fs_.account_name = login;
         fs_.step = FlowStep::Working;
         fs_.message = TR("Вход в Steam…", "Signing in to Steam…");
@@ -1199,7 +1367,17 @@ void Guard::login_begin(const std::string& login, const std::string& password, i
         }
         return set_flow(gen, FlowStep::NeedEmailCode, "");
     }
-    if (contains(al, guard::GuardDeviceCode)) return set_flow(gen, FlowStep::NeedDeviceCode, "");
+    if (contains(al, guard::GuardDeviceCode)) {
+        if (!contains(al, guard::GuardDeviceConfirmation)) return set_flow(gen, FlowStep::NeedDeviceCode, "");
+        // the code can be typed, or the sign-in approved in the Steam app: keep polling meanwhile
+        {
+            std::lock_guard<std::mutex> lk(fmtx_);
+            if (flow_gen_ != gen) return;
+            fs_.hint = "app";
+        }
+        set_flow(gen, FlowStep::NeedDeviceCode, "");
+        return login_poll(gen, 180);
+    }
     if (contains(al, guard::GuardDeviceConfirmation) || contains(al, guard::GuardEmailConfirmation)) {
         set_flow(gen, FlowStep::WaitConfirmation, contains(al, guard::GuardDeviceConfirmation)
                                                  ? TR("Подтвердите вход в мобильном приложении Steam", "Approve the sign-in in the Steam mobile app")
@@ -1280,6 +1458,31 @@ void Guard::login_finish(const guard::PollResult& pr, int gen) {
         if (r.net_ok && r.http == 200 && guard::parse_access_token(r.body, access, refresh)) s.access_token = access;
     }
     if (flow_cancelled(gen)) return;
+    if (st.kind == FlowKind::Session) {
+        std::string key = key_for_steamid(s.steamid);
+        if (!key.empty()) {
+            std::lock_guard<std::mutex> lk(mtx_);
+            auto it = items_.find(key);
+            if (it != items_.end()) {
+                it->second.acc.session = s;
+                it->second.confs.needauth = false;
+                save_locked(it->second);
+            }
+        } else {
+            std::lock_guard<std::mutex> lk(mtx_);
+            WebSession& w = sessions_[s.steamid];
+            w.account_name = pr.account_name.empty() ? p.login : pr.account_name;
+            w.session = s;
+            save_session_locked(s.steamid);
+        }
+        {
+            std::lock_guard<std::mutex> lk(fmtx_);
+            if (flow_gen_ != gen) return;
+            fs_.key = std::to_string(s.steamid);
+        }
+        set_flow(gen, FlowStep::Done, TR("Вход выполнен — сессия сохранена, пароль нет", "Signed in — the session is saved, the password is not"));
+        return;
+    }
     if (st.kind == FlowKind::Login) {
         std::string key = st.key;
         {

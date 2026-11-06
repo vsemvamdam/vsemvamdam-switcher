@@ -87,6 +87,27 @@ void App::frame() {
         FlowStep fs = guard_->flow().step;
         if (fs == FlowStep::Working || fs == FlowStep::WaitConfirmation) guard_anim_ = true;
     }
+    tools_anim_ = false;
+    if (tools_) {
+        // another Steam account: its library and achievements are different
+        uint64_t sid = current_steam_id();
+        if (sid && sid != tools_sid_) {
+            if (tools_sid_) {
+                ach_app_ = 0;
+                ach_changes_.clear();
+                stat_edits_.clear();
+                hours_sel_.clear();
+                tools_->load_library(true);
+            }
+            tools_sid_ = sid;
+        }
+        if (page_ == Page::Achievements) {
+            StatsView sv = tools_->stats_view();
+            tools_anim_ = sv.loading || sv.applying || tools_->library().loading;
+        } else if (page_ == Page::Farm) {
+            tools_anim_ = tools_->library().loading;
+        }
+    }
 
     if (page_ == Page::Guard && last_page_ != Page::Guard) guard_fetched_sel_.clear();  // refresh confirmations on every visit
     last_page_ = page_;
@@ -98,6 +119,10 @@ void App::frame() {
         draw_settings(sw, 0, W - sw, H);
     } else if (page_ == Page::Guard && guard_) {
         draw_guard(sw, 0, W - sw, H);
+    } else if (page_ == Page::Achievements && tools_) {
+        draw_achievements(sw, 0, W - sw, H);
+    } else if (page_ == Page::Farm && tools_) {
+        draw_farm(sw, 0, W - sw, H);
     } else {
         page_ = Page::Accounts;
         draw_accounts(sw, 0, W - sw, H);
@@ -105,6 +130,7 @@ void App::frame() {
     draw_context_menu();
     draw_dialogs();
     if (guard_) draw_guard_dialogs();
+    if (tools_) draw_tools_dialogs();
     draw_toasts();
 
     // global shortcuts

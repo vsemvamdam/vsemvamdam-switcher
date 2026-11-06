@@ -2,6 +2,7 @@
 #pragma once
 #include <atomic>
 #include <map>
+#include <set>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -10,6 +11,7 @@
 
 #include "../core/settings.h"
 #include "guard.h"
+#include "steam_tools.h"
 #include "host.h"
 #include "imgui.h"
 #include "platform.h"
@@ -60,6 +62,7 @@ private:
     SteamPlatform* steam_ = nullptr;
     std::map<std::string, std::vector<Account>> accounts_;
     std::unique_ptr<Guard> guard_;
+    std::unique_ptr<SteamTools> tools_;
     std::string cur_;          // current platform id
     std::string selected_;     // selected account id
     bool start_hidden_ = false;
@@ -75,7 +78,7 @@ private:
     std::thread worker_;
 
     // ---- UI state
-    enum class Page { Accounts, Settings, Guard };
+    enum class Page { Accounts, Settings, Guard, Achievements, Farm };
     Page page_ = Page::Accounts;
     char search_[128] = {};
     std::string ctx_account_;   // account for context menu
@@ -109,7 +112,7 @@ private:
     char args_buf_[512] = {};
 
     // ---- Steam Guard UI state
-    enum class GDlg { None, Passkey, Login, Link, Revocation, Export, RemoveLocal, Deactivate, RespondAll, ImportErrors };
+    enum class GDlg { None, Passkey, Login, Link, Revocation, Export, RemoveLocal, Deactivate, RespondAll, ImportErrors, Session, ResetStats };
     GDlg gdlg_ = GDlg::None;
     bool gdlg_open_req_ = false;
     std::string gdlg_key_;
@@ -134,7 +137,25 @@ private:
     char guard_search_[128] = {};
     std::map<std::string, std::string> guard_ids_;  // SteamID64 -> guard key (refreshed every frame)
     bool guard_anim_ = false;
+    bool tools_anim_ = false;
     Page last_page_ = Page::Accounts;
+
+    // ---- Achievements / Farm UI state
+    uint32_t ach_app_ = 0;
+    char ach_search_[128] = {};
+    int ach_filter_ = 0;      // 0 all, 1 locked, 2 unlocked
+    int ach_tab_ = 0;         // 0 achievements, 1 stats
+    bool ach_narrow_ = false; // one pane at a time
+    bool ach_only_stats_ = true;
+    std::map<std::string, bool> ach_changes_;
+    std::map<std::string, std::string> stat_edits_;
+    int farm_tab_ = 0;        // 0 cards, 1 hours
+    int farm_mode_ = 0;       // cards::Mode
+    int hours_limit_ = 0;
+    char farm_search_[128] = {};
+    std::set<uint32_t> hours_sel_;
+    uint64_t session_for_ = 0;
+    uint64_t tools_sid_ = 0;    // Steam account the tools pages were built for  // Session sign-in dialog: which SteamID it is for
 
     // ---- helpers
     Platform* platform(const std::string& id);
@@ -195,6 +216,18 @@ private:
     void draw_settings_guard();
     bool guard_chip(const std::string& id64, ImVec2 pos, bool card_hovered);  // returns true when clicked
     void draw_sidebar_guard(float iw);
+    // Achievements & farm
+    void tools_init();
+    void tools_event(const ToolEvent& e);
+    uint64_t current_steam_id();
+    std::string current_steam_login();
+    void draw_achievements(float x, float y, float w, float h);
+    void draw_ach_detail(float w, float h);
+    void draw_farm(float x, float y, float w, float h);
+    void draw_farm_cards(float w);
+    void draw_farm_hours(float w, float h);
+    void draw_tools_dialogs();
+    void open_session_login(uint64_t steamid, const std::string& login);
     bool handle_card_input(const std::string& pid, const Account& a, bool hovered);
 };
 

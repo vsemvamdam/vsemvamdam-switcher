@@ -303,6 +303,41 @@ void App::draw_sidebar_guard(float iw) {
     }
     if (hov) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
     ImGui::SetCursorScreenPos(ImVec2(pos.x, pos.y + S(42)));
+    if (tools_) {
+        // achievements and farm
+        auto nav = [&](const char* id, Page pg, const char* icon, const char* label, const std::string& right, bool live) {
+            ImVec2 q(S(12), ImGui::GetCursorScreenPos().y);
+            ImGui::SetCursorScreenPos(q);
+            bool s2 = page_ == pg;
+            bool c2 = ImGui::InvisibleButton(id, ImVec2(iw, S(40)));
+            bool h2 = ImGui::IsItemHovered();
+            float a2 = anim(ImGui::GetItemID(), h2 || s2, 18.0f);
+            if (c2) {
+                page_ = pg;
+                search_[0] = 0;
+            }
+            if (a2 > 0) dl->AddRectFilled(q, ImVec2(q.x + iw, q.y + S(40)), with_alpha(s2 ? P.surface : P.surface_active, s2 ? 1.0f : a2 * 0.8f), S(10));
+            if (s2) dl->AddRect(q, ImVec2(q.x + iw, q.y + S(40)), P.border, S(10), S(1));
+            ImVec2 i2(q.x + S(10), q.y + S(10));
+            dl->AddRectFilled(i2, ImVec2(i2.x + S(20), i2.y + S(20)), P.accent_soft, S(6));
+            ImVec2 t2 = F_REG->CalcTextSizeA(S(13), FLT_MAX, 0, icon);
+            dl->AddText(F_REG, S(13), ImVec2(i2.x + (S(20) - t2.x) * 0.5f, i2.y + (S(20) - t2.y) * 0.5f), s2 ? P.text : P.text2, icon);
+            dl->AddText(s2 ? F_SEMI : F_MED, S(kBase), ImVec2(q.x + S(40), q.y + S(11)), s2 ? P.text : P.text2, label);
+            if (live) {
+                dl->AddCircleFilled(ImVec2(q.x + iw - S(16), q.y + S(20)), S(4), P.ok, 16);  // static: no redraws for hours
+            } else if (!right.empty()) {
+                ImVec2 cs = F_MED->CalcTextSizeA(S(kBase * 0.85f), FLT_MAX, 0, right.c_str());
+                dl->AddText(F_MED, S(kBase * 0.85f), ImVec2(q.x + iw - cs.x - S(12), q.y + S(12)), P.text3, right.c_str());
+            }
+            if (h2) {
+                ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                if (live) ImGui::SetTooltip("%s", TR("Фарм идёт", "The farm is running"));
+            }
+            ImGui::SetCursorScreenPos(ImVec2(q.x, q.y + S(42)));
+        };
+        nav("##achnav", Page::Achievements, ICON_TROPHY, TR("Достижения", "Achievements"), {}, false);
+        nav("##farmnav", Page::Farm, ICON_TIMER, TR("Фарм", "Farm"), {}, tools_->farming());
+    }
     ImGui::Dummy(ImVec2(0, 0));
 }
 
@@ -938,13 +973,15 @@ static void code_box(const std::string& code, float w) {
 }
 
 void App::draw_guard_dialogs() {
-    static const char* ids[] = {"", "##gd_passkey", "##gflow", "##gflow", "##gd_revoc", "##gd_export", "##gd_remove", "##gd_deact", "##gd_all", "##gd_errors"};
+    static const char* ids[] = {"", "##gd_passkey", "##gflow", "##gflow", "##gd_revoc", "##gd_export", "##gd_remove", "##gd_deact", "##gd_all", "##gd_errors", "##gflow"};
+    static_assert(sizeof(ids) / sizeof(ids[0]) == (size_t)GDlg::Session + 1, "a popup id for every guard dialog");
+    if (gdlg_ == GDlg::ResetStats) return;  // achievements page (draw_tools_dialogs)
     if (gdlg_ != GDlg::None && gdlg_open_req_) {
         ImGui::OpenPopup(ids[(int)gdlg_]);
         gdlg_open_req_ = false;
     }
     if (gdlg_ == GDlg::None) return;
-    if (gdlg_ == GDlg::Login || gdlg_ == GDlg::Link) {
+    if (gdlg_ == GDlg::Login || gdlg_ == GDlg::Link || gdlg_ == GDlg::Session) {
         draw_guard_flow_dialog();
         return;
     }
@@ -1132,6 +1169,7 @@ void App::draw_guard_dialogs() {
 void App::draw_guard_flow_dialog() {
     FlowState f = guard_->flow();
     bool link = gdlg_ == GDlg::Link;
+    bool session = gdlg_ == GDlg::Session;  // a plain sign-in for the farm (no authenticator here)
     GuardView v;
     bool have = !gdlg_key_.empty() && guard_->view(gdlg_key_, v);
     const char* title = link ? TR("Привязать аутентификатор", "Link an authenticator") : TR("Вход в Steam", "Sign in to Steam");
@@ -1187,6 +1225,22 @@ void App::draw_guard_flow_dialog() {
                     wipe_buf(g_buf2_, sizeof(g_buf2_));
                 }
                 if (r == 2) close = true;
+            } else if (session) {
+                dialog_text(TR("Вход нужен, чтобы видеть, сколько карточек осталось выбить, и полный список игр. "
+                               "Сохраняется только сессия — пароль нигде не хранится.",
+                               "Signing in shows how many card drops are left and the full game list. "
+                               "Only the session is kept — the password is never stored."));
+                field_label(TR("Логин Steam", "Steam login"));
+                plain_input("##lg", g_buf1_, sizeof(g_buf1_), "", 0, g_buf1_[0] == 0);
+                field_label(TR("Пароль", "Password"));
+                plain_input("##pw", g_buf2_, sizeof(g_buf2_), "", ImGuiInputTextFlags_Password, g_buf1_[0] != 0);
+                bool ok = trim(g_buf1_).size() > 0 && g_buf2_[0];
+                int r = dialog_buttons(TR("Войти", "Sign in"), TR("Отмена", "Cancel"), ok);
+                if ((r == 1 || enter) && ok) {
+                    guard_->flow_session(trim(g_buf1_), g_buf2_);
+                    wipe_buf(g_buf2_, sizeof(g_buf2_));
+                }
+                if (r == 2) close = true;
             } else {
                 std::string nm = have ? guard_name(v) : std::string();
                 std::string who = have ? nm + (v.account_name.empty() || iequals(v.account_name, nm) ? "" : " (" + v.account_name + ")") : std::string();
@@ -1216,6 +1270,9 @@ void App::draw_guard_flow_dialog() {
             if (f.step == FlowStep::NeedEmailCode)
                 dialog_text(std::string(TR("Steam отправил код подтверждения на почту", "Steam sent a confirmation code to your e-mail")) +
                             (f.hint.empty() ? std::string(".") : " (@" + f.hint + ")."));
+            else if (f.hint == "app")
+                dialog_text(TR("Введите код Steam Guard из мобильного приложения Steam или просто подтвердите вход в самом приложении.",
+                               "Enter the Steam Guard code from the Steam mobile app, or simply approve the sign-in in the app."));
             else
                 dialog_text(TR("Введите код Steam Guard из мобильного приложения Steam.", "Enter the Steam Guard code from the Steam mobile app."));
             field_label(TR("Код", "Code"));
@@ -1344,6 +1401,8 @@ void App::draw_guard_flow_dialog() {
         }
     }
     if (close) {
+        // a fresh session unlocks the full library and the card counts
+        if (f.step == FlowStep::Done && f.kind != FlowKind::Link && tools_) tools_->load_library(true);
         guard_->flow_reset();
         wipe_buf(g_buf2_, sizeof(g_buf2_));
         ImGui::CloseCurrentPopup();

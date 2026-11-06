@@ -50,7 +50,7 @@ struct ImportReport {
     std::vector<std::string> keys;       // imported items
 };
 
-enum class FlowKind { Login, Link };
+enum class FlowKind { Login, Link, Session };  // Session: sign in an account that has no authenticator here
 enum class FlowStep { Idle, Working, NeedEmailCode, NeedDeviceCode, WaitConfirmation, NeedPhone, NeedPhoneEmail, NeedPhoneSms,
                       NeedActivation, Done, Failed };
 struct FlowState {
@@ -120,6 +120,7 @@ public:
     void flow_reset();
     void flow_login(const std::string& key, const std::string& password);
     void flow_link(const std::string& login, const std::string& password);
+    void flow_session(const std::string& login, const std::string& password);
     void flow_code(const std::string& code);
     void flow_phone(const std::string& phone, const std::string& country);
     void flow_phone_email_done();
@@ -131,6 +132,15 @@ public:
     // Talks to Steam without any account (server time, RSA key, a sign-in with a random name, confirmations without a
     // session) to check the transport. Lines describe each step; false when the protocol looks broken.
     static bool self_test(std::vector<std::string>& lines);
+
+    // ---- web sessions (for the card farm etc.): from an authenticator's session or a sign-in without one
+    bool has_web_session(uint64_t steamid);
+    std::string web_session_name(uint64_t steamid);
+    void forget_web_session(uint64_t steamid);
+    // GET on steamcommunity.com as that account (cookie session; refreshes the token once on a redirect to login)
+    bool community_get(uint64_t steamid, const std::string& path_query, std::string& body, int& status);
+    // GET on api.steampowered.com with the account's access token appended (url already has a '?')
+    bool webapi_get(uint64_t steamid, const std::string& url, std::string& body, int& status);
 
     // ---- events (called on the UI thread)
     void on_event(std::function<void(const GuardEvent&)> cb) { on_event_ = std::move(cb); }
@@ -149,6 +159,13 @@ private:
     Store& store_;
     std::mutex mtx_;
     std::map<std::string, Item> items_;
+    struct WebSession {
+        std::string account_name;
+        guard::Session session;
+    };
+    std::map<uint64_t, WebSession> sessions_;  // sign-ins without an authenticator (guard\\sessions)
+    bool web_session(uint64_t steamid, guard::Session& out, bool force_refresh);
+    bool save_session_locked(uint64_t steamid);
     std::atomic<int64_t> offset_{0};
     std::atomic<bool> time_synced_{false};
     std::atomic<bool> stop_{false};

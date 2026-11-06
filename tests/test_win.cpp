@@ -133,11 +133,18 @@ static void test_steam(const std::string& fake) {
 }
 
 #include "test_win_guard.inc"
+#include "test_win_tools.inc"
+#include "../src/app/steam_helper.h"
 
 extern void test_basic(const std::string& root, const std::string& fake);  // defined below
 extern void test_epic(const std::string& root, const std::string& fake);
 
-int wmain() {
+int wmain(int argc, wchar_t** argv) {
+    // child processes of the achievements / farm test
+    std::vector<std::string> args;
+    for (int i = 1; i < argc; ++i) args.push_back(narrow(argv[i]));
+    int helper_rc = 0;
+    if (steam_helper_main(args, helper_rc)) return helper_rc;
     SetConsoleOutputCP(CP_UTF8);
     wchar_t tmp[MAX_PATH];
     GetTempPathW(MAX_PATH, tmp);
@@ -154,6 +161,8 @@ int wmain() {
     test_epic(g_root, fake);
     std::printf("== steam guard storage\n");
     test_guard_store(g_root);
+    std::printf("== achievements and farm\n");
+    test_tools(g_root);
     std::printf("%d passed, %d failed\n", g_pass, g_fail);
     return g_fail ? 1 : 0;
 }

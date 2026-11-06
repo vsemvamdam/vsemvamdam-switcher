@@ -89,6 +89,8 @@
 #define ICON_BADGE_ALERT             "\xee\x91\xb5"
 #define ICON_BOOKMARK                "\xee\x81\xa0"
 #define ICON_COMMAND                 "\xee\x82\x9a"
+#define ICON_TROPHY                  "\xee\x8d\xb3"
+#define ICON_LOCK_OPEN               "\xee\x84\x8c"
 
 #define ICON_MIN 0xe041
 #define ICON_MAX 0xe617

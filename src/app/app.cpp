@@ -22,6 +22,7 @@
 #include "../ui/theme.h"
 #include "basic_platform.h"
 #include "imgui.h"
+#include "steam_helper.h"
 #include "steam_platform.h"
 
 namespace vs {
@@ -61,6 +62,7 @@ bool App::init(const std::vector<std::string>& args) {
     apply_language();
     load_platform_defs();
     guard_init();
+    tools_init();
     {
         auto& s = store_.settings;
         // Steam is always on; basic platforms are on when enabled in settings
@@ -72,6 +74,8 @@ bool App::init(const std::vector<std::string>& args) {
     for (auto& a : args) {
         if (a == "--tray" || a == "--minimized" || a == "/tray") start_hidden_ = true;
         if (a == "--guard") page_ = Page::Guard;
+        if (a == "--achievements") page_ = Page::Achievements;
+        if (a == "--farm") page_ = Page::Farm;
     }
     if (store_.settings.start_minimized) start_hidden_ = true;
     // a switch command passed to the first instance is executed once the UI is ready
@@ -137,10 +141,12 @@ bool App::animating() const {
     if (busy_) return true;
     if (!toasts_.empty()) return true;
     if (guard_anim_) return true;  // login flow / confirmations loading spinners
+    if (tools_anim_) return true;  // library / stats loading spinners
     return false;
 }
 
 int App::tick_ms() const {
+    if ((page_ == Page::Farm || page_ == Page::Achievements) && tools_ && tools_->farming()) return 1000;  // farm timers
     if (!guard_) return 0;
     if (page_ == Page::Guard) return guard_->empty() ? 0 : 250;
     if (page_ == Page::Accounts && cur_ == "steam" && store_.settings.guard_codes_on_cards && !guard_ids_.empty()) return 500;
@@ -165,6 +171,7 @@ void App::shutdown() {
     if (worker_.joinable()) worker_.join();  // never exit in the middle of clearing/restoring a login
     if (steam_) steam_->stop_refresh();
     if (g_sda_thread_.joinable()) g_sda_thread_.join();
+    if (tools_) tools_->stop();  // stops the farm helpers
     if (guard_) guard_->stop();
     store_.settings.last_platform = cur_;
     store_.save_settings();
@@ -253,6 +260,9 @@ void App::run_switch(const std::string& pid, const SwitchRequest& req, bool from
     }
     Platform* p = platform(pid);
     if (!p) { busy_ = false; return; }
+    // the farm runs inside the Steam session that is about to change
+    if (p->is_steam() && tools_ && tools_->farming())
+        tools_->stop_farm(TR("Фарм остановлен: переключение аккаунта Steam", "Farm stopped: switching the Steam account"));
     busy_platform_ = pid;
     busy_account_ = req.account_id;
     busy_started_ = ImGui::GetCurrentContext() ? ImGui::GetTime() : 0.0;
@@ -505,9 +515,8 @@ bool App::execute_cli(const std::vector<std::string>& args, bool headless, std::
 }
 
 bool App::handle_cli_early(const std::vector<std::string>& args, int& rc) {
-    (void)args;
-    (void)rc;
-    return false;
+    // achievement / farm helper processes (see steam_helper.cpp): no window, no single-instance check
+    return steam_helper_main(args, rc);
 }
 
 bool App::handle_cli_headless(const std::vector<std::string>& args, int& rc) {
@@ -626,6 +635,19 @@ std::vector<TrayEntry> App::tray_menu() {
         sub.children.push_back(op);
         if (!items.empty()) items.push_back(TrayEntry{});
         items.push_back(sub);
+    }
+    if (tools_ && tools_->farming()) {
+        FarmView fv = tools_->farm_view();
+        if (!items.empty()) items.push_back(TrayEntry{});
+        TrayEntry f;
+        f.text = std::string(fv.kind == FarmKind::Cards ? TR("Фарм карточек", "Card farm") : TR("Фарм часов", "Hours farm")) + " · " +
+                 TR("открыть", "open");
+        f.id = add_action([this] { page_ = Page::Farm; host_show_window(); });
+        items.push_back(f);
+        TrayEntry st;
+        st.text = TR("Остановить фарм", "Stop the farm");
+        st.id = add_action([this] { tools_->stop_farm(); });
+        items.push_back(st);
     }
     if (!items.empty()) items.push_back(TrayEntry{});
     TrayEntry open;

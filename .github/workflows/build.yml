@@ -82,6 +82,7 @@ jobs:
           path: |
             build/wintest.exe
             build/fake_client.exe
+            build/steamclient64.dll
             build/net_probe.exe
           retention-days: 7
 

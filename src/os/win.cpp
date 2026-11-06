@@ -459,6 +459,62 @@ bool shell_open(const std::string& target, const std::string& args) {
     return r > 32;
 }
 
+static HANDLE child_job() {
+    static HANDLE job = [] {
+        HANDLE j = CreateJobObjectW(nullptr, nullptr);
+        if (j) {
+            JOBOBJECT_EXTENDED_LIMIT_INFORMATION li{};
+            li.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_BREAKAWAY_OK;
+            SetInformationJobObject(j, JobObjectExtendedLimitInformation, &li, sizeof(li));
+        }
+        return j;
+    }();
+    return job;
+}
+
+bool spawn_child(const std::string& exe, const std::string& args, Child& out) {
+    out = Child{};
+    std::wstring cmd = L"\"" + widen(exe) + L"\" " + widen(args);
+    std::vector<wchar_t> buf(cmd.begin(), cmd.end());
+    buf.push_back(0);
+    STARTUPINFOW si{};
+    si.cb = sizeof(si);
+    si.dwFlags = STARTF_USESHOWWINDOW | STARTF_FORCEOFFFEEDBACK;  // no "app starting" cursor for every helper
+    si.wShowWindow = SW_HIDE;
+    PROCESS_INFORMATION pi{};
+    if (!CreateProcessW(nullptr, buf.data(), nullptr, nullptr, FALSE, CREATE_SUSPENDED | CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi))
+        return false;
+    if (HANDLE j = child_job()) AssignProcessToJobObject(j, pi.hProcess);
+    ResumeThread(pi.hThread);
+    CloseHandle(pi.hThread);
+    out.process = pi.hProcess;
+    out.pid = pi.dwProcessId;
+    return true;
+}
+
+bool child_wait(Child& c, uint32_t timeout_ms, uint32_t* exit_code) {
+    if (!c.process) return true;
+    if (WaitForSingleObject((HANDLE)c.process, timeout_ms) != WAIT_OBJECT_0) return false;
+    DWORD code = 0;
+    GetExitCodeProcess((HANDLE)c.process, &code);
+    if (exit_code) *exit_code = code;
+    return true;
+}
+
+bool child_running(const Child& c) { return c.process && WaitForSingleObject((HANDLE)c.process, 0) == WAIT_TIMEOUT; }
+
+void child_kill(Child& c) {
+    if (!c.process) return;
+    if (WaitForSingleObject((HANDLE)c.process, 0) == WAIT_TIMEOUT) {
+        TerminateProcess((HANDLE)c.process, 1);
+        WaitForSingleObject((HANDLE)c.process, 3000);
+    }
+    CloseHandle((HANDLE)c.process);
+    c = Child{};
+}
+
+uint32_t current_pid() { return GetCurrentProcessId(); }
+
 std::string self_exe_path() {
     wchar_t buf[MAX_PATH * 4];
     DWORD n = GetModuleFileNameW(nullptr, buf, MAX_PATH * 4);

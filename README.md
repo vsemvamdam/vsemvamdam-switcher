@@ -2,7 +2,7 @@
 
 [![build](https://github.com/vsemvamdam/vsemvamdam-switcher/actions/workflows/build.yml/badge.svg)](https://github.com/vsemvamdam/vsemvamdam-switcher/actions/workflows/build.yml)
 
-Быстрый переключатель аккаунтов для Windows: Steam, Epic Games, Battle.net, Riot, Ubisoft Connect, Discord, EA app и другие. Со встроенным Steam Guard — заменой Steam Desktop Authenticator.
+Быстрый переключатель аккаунтов для Windows: Steam, Epic Games, Battle.net, Riot, Ubisoft Connect, Discord, EA app и другие. Со встроенным Steam Guard — заменой Steam Desktop Authenticator, менеджером достижений и фармом часов и карточек.
 
 **Скачать:** [последний релиз](https://github.com/vsemvamdam/vsemvamdam-switcher/releases/latest) → `vsemvamdam-switcher.exe`.
 
@@ -28,6 +28,19 @@
 - привязка нового аккаунта (с номером телефона или без), код восстановления, удаление аутентификатора из Steam;
 - резервная копия в формате SDA — с шифрованием ключом или без, её откроет и сам SDA.
 
+**Достижения** — как [Steam Achievement Manager](https://github.com/gibbed/SteamAchievementManager)
+- библиотека аккаунта, который сейчас открыт в Steam (после входа в разделе «Фарм» — полный список с часами), поиск по названию и AppID;
+- открыть или закрыть любые достижения игры — по одному или все сразу, с фильтром «получены / не получены» и иконками;
+- правка статистики игры с проверкой границ (минимум, максимум, «только растёт»), сброс всей статистики — с достижениями или без;
+- значения, которые выставляют только серверы игры, помечены замком и не меняются;
+- Steam должен быть запущен. В сетевых играх с рейтингом или античитом лучше ничего не трогать.
+
+**Фарм часов и карточек** — как Idle Master / [ArchiSteamFarm](https://github.com/JustArchiNET/ArchiSteamFarm)
+- часы: отметьте до 32 игр — Steam будет считать, что вы в них играете; можно ограничить время (1–24 ч);
+- карточки: свитчер сам смотрит страницу значков, где ещё остались карточки, и запускает игры. Режимы: «Авто» (игры, где меньше 2 часов, — все вместе, потом по одной, как Idle Master), «По одной», «Все сразу»;
+- уведомления о выпавших карточках, статус и кнопка «Остановить» в трее; фарм идёт, пока свитчер открыт (в том числе свёрнутым в трей), и останавливается при переключении аккаунта Steam;
+- игры не запускаются по-настоящему: для каждой поднимается маленький невидимый процесс свитчера, который Steam видит как игру. Друзья в это время видят вас «в игре».
+
 **Другие клиенты** — сохраняют и подменяют файлы/ключи реестра, где клиент помнит вход: «Сохранить текущий» → «Новый вход» → войти во второй аккаунт → «Сохранить текущий». Дальше переключение в один клик. Каталог платформ — `src/core/platforms.json`, свой можно положить в папку данных как `platforms.json`.
 
 **Везде**
@@ -43,6 +56,8 @@ vsemvamdam-switcher.exe --switch epic:<id>
 vsemvamdam-switcher.exe --new steam        # экран входа
 vsemvamdam-switcher.exe --tray             # запуск в трей
 vsemvamdam-switcher.exe --guard            # открыть раздел Steam Guard
+vsemvamdam-switcher.exe --achievements     # открыть раздел «Достижения»
+vsemvamdam-switcher.exe --farm             # открыть раздел «Фарм»
 vsemvamdam-switcher.exe --guard-code <логин|SteamID64>   # скопировать текущий код Steam Guard
 ```
 
@@ -62,10 +77,10 @@ vsemvamdam-switcher.exe --guard-code <логин|SteamID64>   # скопиров
 
 ```
 make            # build/vsemvamdam-switcher.exe
-make test       # юнит-тесты ядра (VDF, loginusers, статус, движок платформ, Steam Guard и криптография)
-make wintest    # интеграционный тест с фейковыми Steam и клиентом: wine build/wintest.exe
+make test       # юнит-тесты ядра (VDF, loginusers, статус, движок платформ, Steam Guard, криптография, схемы достижений, значки)
+make wintest    # интеграционный тест с фейковыми Steam, клиентом и steamclient64.dll: wine build/wintest.exe
 ```
 
 ## Лицензия
 
-GPL-3.0. Механика переключения и описания платформ основаны на открытом [TcNo Account Switcher](https://github.com/TCNOco/TcNo-Acc-Switcher) (GPL-3.0). Steam Guard совместим с форматом maFile и шифрованием [Steam Desktop Authenticator](https://github.com/Jessecar96/SteamDesktopAuthenticator) (MIT). Шрифты Inter (OFL) и Lucide (ISC), интерфейс — Dear ImGui (MIT), JSON — nlohmann/json (MIT), stb (MIT/PD).
+GPL-3.0. Механика переключения и описания платформ основаны на открытом [TcNo Account Switcher](https://github.com/TCNOco/TcNo-Acc-Switcher) (GPL-3.0). Steam Guard совместим с форматом maFile и шифрованием [Steam Desktop Authenticator](https://github.com/Jessecar96/SteamDesktopAuthenticator) (MIT). Достижения работают так же, как Steam Achievement Manager (zlib), фарм карточек повторяет алгоритм Idle Master. Шрифты Inter (OFL) и Lucide (ISC), интерфейс — Dear ImGui (MIT), JSON — nlohmann/json (MIT), stb (MIT/PD).
