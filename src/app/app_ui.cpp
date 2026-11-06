@@ -106,13 +106,14 @@ void App::draw_sidebar(float w, float h) {
     dl->AddRectFilled(ImVec2(0, 0), ImVec2(w, h), P.sidebar);
     dl->AddLine(ImVec2(w - 0.5f, 0), ImVec2(w - 0.5f, h), P.border, S(1));
 
-    // brand mark
+    // brand mark: the author's avatar (res/icon256.png, RCDATA 120)
     float x = S(22), y = S(24);
     {
-        float r = S(9);
-        ImVec2 c1(x + r, y + r + S(1)), c2(x + r * 2.1f, y + r * 1.6f + S(1));
-        dl->AddCircle(c1, r * 0.82f, g_dark ? IM_COL32(214, 196, 168, 255) : IM_COL32(176, 156, 126, 255), 32, S(2.2f));
-        dl->AddCircleFilled(c2, r * 0.82f, P.text, 32);
+        float sz = S(30);
+        ImVec2 a(x - S(2), y - S(1)), b(a.x + sz, a.y + sz);
+        ImTextureID logo = tex_resource(120, (int)(sz + 0.5f));
+        if (logo) dl->AddImage(ImTextureRef(logo), a, b);
+        else dl->AddRectFilled(a, b, P.surface, S(7));
         dl->AddText(F_SEMI, S(kBase * 1.08f), ImVec2(x + S(40), y - S(1)), P.text, "vsemvamdam");
         dl->AddText(F_REG, S(kBase * 0.86f), ImVec2(x + S(40), y + S(16)), P.text3, "switcher");
     }
