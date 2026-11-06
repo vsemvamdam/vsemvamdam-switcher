@@ -138,7 +138,8 @@ public:
     std::string web_session_name(uint64_t steamid);
     void forget_web_session(uint64_t steamid);
     // GET on steamcommunity.com as that account (cookie session; refreshes the token once on a redirect to login)
-    bool community_get(uint64_t steamid, const std::string& path_query, std::string& body, int& status);
+    // need_login (optional): the failure is the session itself (expired / revoked / missing), not the network
+    bool community_get(uint64_t steamid, const std::string& path_query, std::string& body, int& status, bool* need_login = nullptr);
     // GET on api.steampowered.com with the account's access token appended (url already has a '?')
     bool webapi_get(uint64_t steamid, const std::string& url, std::string& body, int& status);
 
@@ -164,7 +165,7 @@ private:
         guard::Session session;
     };
     std::map<uint64_t, WebSession> sessions_;  // sign-ins without an authenticator (guard\\sessions)
-    bool web_session(uint64_t steamid, guard::Session& out, bool force_refresh);
+    bool web_session(uint64_t steamid, guard::Session& out, bool force_refresh, bool* need_login = nullptr);
     bool save_session_locked(uint64_t steamid);
     std::atomic<int64_t> offset_{0};
     std::atomic<bool> time_synced_{false};

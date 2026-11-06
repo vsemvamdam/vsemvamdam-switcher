@@ -93,6 +93,9 @@ void App::frame() {
         uint64_t sid = current_steam_id();
         if (sid && sid != tools_sid_) {
             if (tools_sid_) {
+                FarmView fv = tools_->farm_view();
+                if (fv.active && fv.steamid && fv.steamid != sid)
+                    tools_->stop_farm(TR("Фарм остановлен: в Steam другой аккаунт", "Farm stopped: another account in Steam"));
                 ach_app_ = 0;
                 ach_changes_.clear();
                 stat_edits_.clear();

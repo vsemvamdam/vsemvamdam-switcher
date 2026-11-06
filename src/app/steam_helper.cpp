@@ -36,6 +36,7 @@ struct Opts {
     std::string mode, out, in, root;
     uint32_t app = 0;
     uint32_t parent = 0;
+    uint64_t steamid = 0;  // refuse to work if Steam is signed in to another account
 };
 
 void write_json(const Opts& o, const json& j) {
@@ -177,6 +178,7 @@ int run_idle(const Opts& o, steamc::Client& c) {
         if (tick % 10 == 9) {
             offline = c.logged_on() ? 0 : offline + 1;
             if (offline >= 3) return 3;  // Steam closed or signed out: the switcher restarts us when it is back
+            if (o.steamid && c.steam_id() != o.steamid) return 4;  // another account now: the switcher stops the farm
         }
     }
     if (parent) CloseHandle(parent);
@@ -197,6 +199,7 @@ bool steam_helper_main(const std::vector<std::string>& args, int& rc) {
         else if (k == "--root") o.root = v;
         else if (k == "--app" && parse_u64(v, n)) o.app = (uint32_t)n;
         else if (k == "--parent" && parse_u64(v, n)) o.parent = (uint32_t)n;
+        else if (k == "--steamid" && parse_u64(v, n)) o.steamid = n;
     }
     bool needs_app = o.mode == "stats" || o.mode == "apply" || o.mode == "idle";
     if ((needs_app && !o.app) || (o.mode != "list" && !needs_app)) {
@@ -209,6 +212,11 @@ bool steam_helper_main(const std::vector<std::string>& args, int& rc) {
     if (e != steamc::InitError::None) {
         rc = fail(o, steamc::init_error_code(e));
         return true;
+    }
+    if (o.steamid && c.steam_id() != o.steamid) {
+        c.shutdown();
+        rc = fail(o, "wrong_account");
+        ExitProcess((UINT)rc);
     }
     if (o.mode == "list") rc = run_list(o, c);
     else if (o.mode == "stats") rc = run_stats(o, c, root);

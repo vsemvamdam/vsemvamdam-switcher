@@ -1084,21 +1084,28 @@ void Guard::forget_web_session(uint64_t steamid) {
     fsx::remove_file(fsx::join(fsx::join(dir(), "sessions"), std::to_string(steamid) + ".vssession"));
 }
 
-bool Guard::web_session(uint64_t steamid, guard::Session& out, bool force) {
+bool Guard::web_session(uint64_t steamid, guard::Session& out, bool force, bool* need_login) {
+    if (need_login) *need_login = false;
     std::string key = key_for_steamid(steamid);
+    bool guard_net_error = false;
     if (!key.empty()) {
         guard::Account a;
-        if (ensure_session(key, force, a) == Sess::Ok) {
+        Sess r = ensure_session(key, force, a);
+        if (r == Sess::Ok) {
             out = a.session;
             if (!out.steamid) out.steamid = steamid;
             return true;
         }
+        guard_net_error = r == Sess::NetError;
     }
     WebSession w;
     {
         std::lock_guard<std::mutex> lk(mtx_);
         auto it = sessions_.find(steamid);
-        if (it == sessions_.end()) return false;
+        if (it == sessions_.end()) {
+            if (need_login) *need_login = !guard_net_error;
+            return false;
+        }
         if (it->second.session.session_id.empty()) {
             it->second.session.session_id = random_session_id();
             save_session_locked(steamid);
@@ -1107,7 +1114,10 @@ bool Guard::web_session(uint64_t steamid, guard::Session& out, bool force) {
     }
     int64_t now = unix_now();
     int64_t exp_r = guard::jwt_exp(w.session.refresh_token);
-    if (w.session.refresh_token.empty() || (exp_r && exp_r <= now + 60)) return false;
+    if (w.session.refresh_token.empty() || (exp_r && exp_r <= now + 60)) {
+        if (need_login) *need_login = true;
+        return false;
+    }
     if (!force && !w.session.access_token.empty() && guard::jwt_exp(w.session.access_token) > now + 120) {
         out = w.session;
         return true;
@@ -1116,7 +1126,11 @@ bool Guard::web_session(uint64_t steamid, guard::Session& out, bool force) {
     Api r = call_form(std::string(kApi) + "IAuthenticationService/GenerateAccessTokenForApp/v1/",
                       {{"refresh_token", w.session.refresh_token}, {"steamid", std::to_string(steamid)}, {"renewal_type", renew ? "1" : "0"}});
     std::string access, refresh;
-    if (!r.net_ok || r.http != 200 || r.eresult != 1 || !guard::parse_access_token(r.body, access, refresh)) return false;
+    if (!r.net_ok || r.http != 200 || r.eresult != 1 || !guard::parse_access_token(r.body, access, refresh)) {
+        // Steam answered and said no (revoked / password changed): only a new sign-in helps
+        if (need_login) *need_login = r.net_ok && (r.http == 401 || r.http == 403 || (r.http == 200 && r.eresult != 1 && r.eresult != 0));
+        return false;
+    }
     std::lock_guard<std::mutex> lk(mtx_);
     auto it = sessions_.find(steamid);
     if (it == sessions_.end()) return false;
@@ -1129,19 +1143,24 @@ bool Guard::web_session(uint64_t steamid, guard::Session& out, bool force) {
     return true;
 }
 
-bool Guard::community_get(uint64_t steamid, const std::string& path_query, std::string& body, int& status) {
+bool Guard::community_get(uint64_t steamid, const std::string& path_query, std::string& body, int& status, bool* need_login) {
     body.clear();
     status = 0;
+    if (need_login) *need_login = false;
     for (int attempt = 0; attempt < 2; ++attempt) {
         guard::Session s;
-        if (!web_session(steamid, s, attempt == 1)) return false;
+        if (!web_session(steamid, s, attempt == 1, need_login)) return false;
         guard::Account a;
         a.steamid = steamid;
         a.session = s;
         os::HttpResponse r = community(a, "GET", path_query, "");
         if (!r.ok) return false;
         status = r.status;
-        if (r.status >= 300 && r.status < 400 && attempt == 0) continue;  // signed out: refresh the token and retry
+        if (r.status >= 300 && r.status < 400) {
+            if (attempt == 0) continue;  // signed out: refresh the token and retry
+            if (need_login) *need_login = true;  // still sent to the login page with a fresh token
+            return false;
+        }
         body = std::move(r.body);
         return r.status == 200;
     }

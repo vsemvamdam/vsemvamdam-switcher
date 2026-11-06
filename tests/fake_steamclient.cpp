@@ -25,7 +25,11 @@
 namespace {
 HMODULE g_self = nullptr;
 std::mutex g_mtx;
-const uint64_t kSteamId = 76561198000000001ULL;
+uint64_t steam_id_now() {  // FAKE_STEAMID switches the "signed-in" account
+    char b[32] = {0};
+    if (GetEnvironmentVariableA("FAKE_STEAMID", b, sizeof(b))) return std::strtoull(b, nullptr, 10);
+    return 76561198000000001ULL;
+}
 
 struct Msg {
     int id;
@@ -101,7 +105,8 @@ void push(int id, uint64_t game, int32_t result) {
     m.data.resize(24);
     std::memcpy(m.data.data(), &game, 8);
     std::memcpy(m.data.data() + 8, &result, 4);
-    std::memcpy(m.data.data() + 16, &kSteamId, 8);
+    uint64_t sid = steam_id_now();
+    std::memcpy(m.data.data() + 16, &sid, 8);
     g_queue.push_back(m);
 }
 
@@ -143,7 +148,10 @@ void* c_unused(void*) { return nullptr; }
 // ---- ISteamUser012
 int u_hsteamuser(void*) { return 1; }
 bool u_logged_on(void*) { return true; }
-void* u_steam_id(void*, uint64_t* out) { *out = kSteamId; return out; }
+void* u_steam_id(void*, uint64_t* out) {
+    *out = steam_id_now();
+    return out;
+}
 
 // ---- ISteamUtils005
 uint32_t ut_app_id(void*) { return app_id(); }
@@ -213,7 +221,7 @@ bool s_store(void*) {
 uint64_t s_request_user(void*, uint64_t sid) {
     std::lock_guard<std::mutex> lk(g_mtx);
     load_state();  // the base for the following Set* calls
-    push(1101, app_id(), sid == kSteamId ? 1 : 2);
+    push(1101, app_id(), sid == steam_id_now() ? 1 : 2);
     return 1234;
 }
 bool s_reset(void*, bool with_ach) {

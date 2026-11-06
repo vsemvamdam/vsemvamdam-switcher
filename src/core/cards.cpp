@@ -84,6 +84,8 @@ bool parse_badges(const std::string& html, BadgePage& out) {
             out.last_page = std::max(out.last_page, std::atoi((*it)[1].str().c_str()));
         out.last_page = std::min(out.last_page, 200);
     }
+    out.valid = html.find("badge_row") != std::string::npos || html.find("profile_xp_block") != std::string::npos ||
+                html.find("badges_sheet") != std::string::npos;
     size_t pos = html.find(row);
     if (pos == std::string::npos) {
         // an own badges page always has the "badges" header; without a session Steam shows a sign-in link

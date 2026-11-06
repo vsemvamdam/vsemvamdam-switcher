@@ -138,6 +138,19 @@ static void test_tools(const std::string& root) {
         }
         if (sv.data.stats.size() == 2) CHECK(sv.data.stats[0].value == 42);
 
+        // the values on screen belong to one account: saving them while Steam has another one is refused
+        SetEnvironmentVariableW(L"FAKE_STEAMID", L"76561198000000002");
+        stats::Changes other;
+        other.achievements["ACH_A"] = true;
+        t.apply(400, other);
+        CHECK(wait_until([&] { auto v = t.stats_view(); return !v.applying && !v.loading; }, 60000));
+        CHECK(t.stats_view().result_error && t.stats_view().result == SteamTools::helper_error_text("wrong_account"));
+        CHECK(read(fsx::join(steam, "fake_state.txt")).find("A 400 ACH_A 0") != std::string::npos);
+        SetEnvironmentVariableW(L"FAKE_STEAMID", nullptr);
+        // a save for a game that is not on screen is ignored
+        t.apply(10, other);
+        CHECK(!t.stats_view().applying);
+
         stats::Changes reset;
         reset.reset_all = true;
         reset.reset_with_achievements = true;
@@ -167,7 +180,9 @@ static void test_tools(const std::string& root) {
         Sleep(1500);  // the helpers stay alive
         fv = t.farm_view();
         CHECK(fv.running.size() == 2 && fv.running[0].ok && fv.running[1].ok);
+        auto t0 = GetTickCount64();
         t.stop_farm();
+        CHECK(GetTickCount64() - t0 < 1000);  // never waits for the farm thread
         CHECK(!t.farming());
         CHECK(t.farm_view().running.empty());
 

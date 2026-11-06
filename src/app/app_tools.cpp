@@ -100,7 +100,11 @@ void App::tools_init() {
 void App::tools_event(const ToolEvent& e) {
     if (e.kind == ToolEventKind::Changed || e.text.empty()) return;
     bool foreground = !host_is_hidden() && GetForegroundWindow() == (HWND)main_hwnd();
-    bool err = e.kind == ToolEventKind::FarmError;
+    bool err = e.error;
+    if (e.kind == ToolEventKind::Notice) {
+        toast(e.text, err);
+        return;
+    }
     if (foreground) toast(e.text, err);
     else host_notify(TR("Фарм Steam", "Steam farm"), e.text);
 }
@@ -211,6 +215,11 @@ void App::draw_achievements(float x, float y, float w, float h) {
             if (ach_search_[0] && !icontains(g.name + " " + std::to_string(g.appid), ach_search_)) continue;
             ImVec2 p0 = ImGui::GetCursorScreenPos();
             float rh = S(52);
+            if (++shown > 5000) break;
+            if (!ImGui::IsRectVisible(p0, ImVec2(p0.x + avail, p0.y + rh))) {  // off screen: just reserve the space
+                ImGui::SetCursorScreenPos(ImVec2(p0.x, p0.y + rh));
+                continue;
+            }
             ImGui::PushID((int)g.appid);
             bool clicked = ImGui::InvisibleButton("##g", ImVec2(avail, rh));
             bool hov = ImGui::IsItemHovered();
@@ -233,7 +242,6 @@ void App::draw_achievements(float x, float y, float w, float h) {
             }
             if (hov) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
             ImGui::SetCursorScreenPos(ImVec2(p0.x, p0.y + rh));
-            if (++shown > 1500) break;
         }
         if (typed_id && std::none_of(lib.games.begin(), lib.games.end(), [&](const ToolGame& g) { return g.appid == typed; })) {
             ImGui::Dummy(ImVec2(0, S(6)));
@@ -274,6 +282,10 @@ void App::draw_ach_detail(float w, float h) {
         return;
     }
     StatsView sv = tools_->stats_view();
+    if (sv.appid != ach_app_) {  // never show (or save) one game's values under another
+        tools_->load_stats(ach_app_);
+        sv = tools_->stats_view();
+    }
     const auto& g = sv.data;
     std::string name = !g.name.empty() ? g.name : tools_->game_name(ach_app_);
     if (name.empty()) name = "AppID " + std::to_string(ach_app_);
@@ -557,9 +569,9 @@ static void farm_running_list(ImDrawList* dl, SteamTools* tools, const FarmView&
         for (auto& b : fv.badges)
             if (b.appid == r.appid) meta += " · " + hours_text(b.hours) + " · " + std::string(TR("карточек: ", "drops: ")) + std::to_string(b.drops);
         text_clipped(dl, F_REG, kBase * 0.8f, ImVec2(p0.x + S(50), p0.y + S(24)), w - S(180), P.text3, meta);
-        std::string t = r.ok ? hms(unix_now() - r.started) : std::string(TR("не запустилась", "not running"));
+        std::string t = r.ok ? hms(unix_now() - r.started) : std::string(TR("перезапуск…", "restarting…"));
         ImVec2 ts = F_SEMI->CalcTextSizeA(S(kBase), FLT_MAX, 0, t.c_str());
-        dl->AddText(F_SEMI, S(kBase), ImVec2(p0.x + w - ts.x - S(14), p0.y + S(14)), r.ok ? P.ok : P.danger, t.c_str());
+        dl->AddText(F_SEMI, S(kBase), ImVec2(p0.x + w - ts.x - S(14), p0.y + S(14)), r.ok ? P.ok : P.warn, t.c_str());
         ImGui::Dummy(ImVec2(w, rh));
     }
 }
@@ -785,10 +797,14 @@ void App::draw_farm_hours(float w, float h) {
     }
     for (auto& g : lib.games) {
         if (farm_search_[0] && !icontains(g.name + " " + std::to_string(g.appid), farm_search_)) continue;
-        if (++shown > 600) break;
+        if (++shown > 5000) break;
         bool sel = hours_sel_.count(g.appid) > 0;
         ImVec2 p0 = ImGui::GetCursorScreenPos();
         float rh = S(44);
+        if (!ImGui::IsRectVisible(p0, ImVec2(p0.x + w, p0.y + rh))) {  // off screen: just reserve the space
+            ImGui::SetCursorScreenPos(ImVec2(p0.x, p0.y + rh));
+            continue;
+        }
         ImGui::PushID((int)g.appid);
         bool clicked = ImGui::InvisibleButton("##h", ImVec2(w, rh));
         bool hov = ImGui::IsItemHovered();

@@ -154,6 +154,7 @@ static void test_cards() {
     cards::BadgePage bp;
     CHECK(cards::parse_badges(kBadges, bp));
     CHECK(bp.signed_in);
+    CHECK(bp.valid);
     CHECK_EQ(bp.last_page, 3);
     CHECK_EQ(bp.games.size(), (size_t)3);
     CHECK(bp.games.size() == 3 && bp.games[0].appid == 730 && bp.games[0].drops == 3 && bp.games[0].hours > 1234.4 && bp.games[0].hours < 1234.6);
@@ -164,6 +165,13 @@ static void test_cards() {
     cards::BadgePage pub;
     CHECK(cards::parse_badges("<html><script>g_steamID = false;</script><a href=\"https://steamcommunity.com/login/home/\">Sign In</a></html>", pub) &&
           !pub.signed_in && pub.games.empty());
+    // an error page with the signed-in header is not "no drops left"
+    cards::BadgePage err;
+    CHECK(cards::parse_badges("<html><script>g_steamID = \"76561198000000001\";</script><div class=\"error_ctn\">An error was encountered while processing your request</div></html>", err) &&
+          !err.valid && err.games.empty());
+    cards::BadgePage none;
+    CHECK(cards::parse_badges("<html><script>g_steamID = \"76561198000000001\";</script><div class=\"profile_xp_block\">Level 12</div><div class=\"badges_sheet\"></div></html>", none) &&
+          none.valid && none.signed_in && none.games.empty());
 
     std::vector<cards::OwnedGame> og;
     CHECK(cards::parse_owned_games(R"({"response":{"game_count":2,"games":[{"appid":730,"name":"Counter-Strike 2","playtime_forever":74070,

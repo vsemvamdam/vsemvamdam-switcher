@@ -17,6 +17,7 @@ struct BadgePage {
     std::vector<BadgeGame> games;  // rows with a game badge (drops may be 0)
     int last_page = 1;
     bool signed_in = true;         // false: the page is the public view / a login page
+    bool valid = false;            // it really is a badges page (not an error / maintenance page)
 };
 bool parse_badges(const std::string& html, BadgePage& out);
 
