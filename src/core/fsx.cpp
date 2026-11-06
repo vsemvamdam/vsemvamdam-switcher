@@ -5,6 +5,8 @@
 #include <fstream>
 #include <iterator>
 #include <random>
+#include <thread>
+#include <functional>
 
 #include "str.h"
 
@@ -44,21 +46,41 @@ bool read_file(const std::string& p, std::string& out) {
     return true;
 }
 
-bool write_file(const std::string& p, const std::string& data) {
+static bool write_tmp_and_move(const fs::path& target, const std::string& data, fs::path& tmp) {
     std::error_code ec;
-    fs::path target = P(p);
     if (target.has_parent_path()) fs::create_directories(target.parent_path(), ec);
-    static std::mt19937 rng((unsigned)std::chrono::steady_clock::now().time_since_epoch().count());
-    fs::path tmp = target;
-    tmp += ".tmp" + std::to_string(rng() % 100000);
+    thread_local std::mt19937 rng((unsigned)std::chrono::steady_clock::now().time_since_epoch().count() ^
+                                  (unsigned)std::hash<std::thread::id>{}(std::this_thread::get_id()));
+    tmp = target;
+    tmp += ".tmp" + std::to_string(rng() % 1000000);
     {
         std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
         if (!f) return false;
         f.write(data.data(), (std::streamsize)data.size());
+        f.flush();
         if (!f) { f.close(); fs::remove(tmp, ec); return false; }
     }
+#ifdef _WIN32
+    if (MoveFileExW(tmp.wstring().c_str(), target.wstring().c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) return true;
+#endif
     fs::rename(tmp, target, ec);
-    if (ec) {
+    return !ec;
+}
+
+bool write_file_atomic(const std::string& p, const std::string& data) {
+    fs::path tmp;
+    if (write_tmp_and_move(P(p), data, tmp)) return true;
+    std::error_code ec;
+    fs::remove(tmp, ec);
+    return false;
+}
+
+bool write_file(const std::string& p, const std::string& data) {
+    std::error_code ec;
+    fs::path target = P(p);
+    fs::path tmp;
+    if (!write_tmp_and_move(target, data, tmp)) {
+        if (tmp.empty() || !fs::exists(tmp, ec)) return false;
         // rename over an existing file can fail on some filesystems; fall back to direct write
         fs::remove(tmp, ec);
         std::ofstream f(target, std::ios::binary | std::ios::trunc);

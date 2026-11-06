@@ -126,6 +126,7 @@ private:
     std::string g_export_folder_;
     std::vector<std::string> g_sda_found_;
     bool g_sda_scanned_ = false;
+    std::thread g_sda_thread_;
     std::string guard_sel_;
     std::string guard_fetched_sel_;
     std::string gctx_key_;

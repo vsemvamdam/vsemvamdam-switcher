@@ -505,10 +505,24 @@ std::string documents_dir() { return known(FOLDERID_Documents); }
 std::string start_menu_programs() { return known(FOLDERID_Programs); }
 
 // ============================================================ Shell
-bool clipboard_set(const std::string& text) {
+static bool clipboard_put(const std::string& text, bool secret) {
     std::wstring w = widen(text);
     if (!OpenClipboard(nullptr)) return false;
     EmptyClipboard();
+    if (secret) {
+        auto put_dword = [](const wchar_t* fmt, DWORD v) {
+            UINT f = RegisterClipboardFormatW(fmt);
+            if (!f) return;
+            HGLOBAL g = GlobalAlloc(GMEM_MOVEABLE, sizeof(DWORD));
+            if (!g) return;
+            *(DWORD*)GlobalLock(g) = v;
+            GlobalUnlock(g);
+            if (!SetClipboardData(f, g)) GlobalFree(g);
+        };
+        put_dword(L"ExcludeClipboardContentFromMonitorProcessing", 0);
+        put_dword(L"CanIncludeInClipboardHistory", 0);
+        put_dword(L"CanUploadToCloudClipboard", 0);
+    }
     HGLOBAL h = GlobalAlloc(GMEM_MOVEABLE, (w.size() + 1) * sizeof(wchar_t));
     bool ok = false;
     if (h) {
@@ -521,6 +535,8 @@ bool clipboard_set(const std::string& text) {
     CloseClipboard();
     return ok;
 }
+bool clipboard_set(const std::string& text) { return clipboard_put(text, false); }
+bool clipboard_set_secret(const std::string& text) { return clipboard_put(text, true); }
 
 bool create_shortcut(const std::string& lnk, const std::string& target, const std::string& args, const std::string& workdir,
                      const std::string& icon, const std::string& desc) {

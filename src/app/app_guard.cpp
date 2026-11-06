@@ -142,7 +142,7 @@ void App::on_notify_click() {
 void App::guard_copy_code(const std::string& key) {
     std::string c = guard_->code(key);
     if (c.empty()) return;
-    os::clipboard_set(c);
+    os::clipboard_set_secret(c);
     toast(store_.settings.streamer_mode ? std::string(TR("Код скопирован", "Code copied"))
                                         : std::string(TR("Код скопирован: ", "Code copied: ")) + c);
 }
@@ -782,10 +782,11 @@ void App::draw_guard_empty(float x, float y, float w, float h) {
     ImDrawList* dl = ImGui::GetWindowDrawList();
     if (!g_sda_scanned_) {
         g_sda_scanned_ = true;
-        std::thread([this] {
+        if (g_sda_thread_.joinable()) g_sda_thread_.join();
+        g_sda_thread_ = std::thread([this] {
             auto found = Guard::find_sda_folders();
             ui_post([this, found] { g_sda_found_ = found; });
-        }).detach();
+        });
     }
     float cx = x + w * 0.5f;
     float cy = y + h * 0.22f;
@@ -1007,7 +1008,7 @@ void App::draw_guard_dialogs() {
                 ImGui::Dummy(ImVec2(0, S(8)));
                 code_box(store_.settings.streamer_mode ? mask_code(code) : code, ImGui::GetContentRegionAvail().x);
                 int r = dialog_buttons(TR("Копировать", "Copy"), TR("Закрыть", "Close"), !code.empty());
-                if (r == 1) { os::clipboard_set(code); toast(TR("Скопировано", "Copied")); close = true; }
+                if (r == 1) { os::clipboard_set_secret(code); toast(TR("Скопировано", "Copied")); close = true; }
                 if (r == 2) close = true;
                 if (close) ImGui::CloseCurrentPopup();
                 ImGui::EndPopup();
@@ -1018,9 +1019,11 @@ void App::draw_guard_dialogs() {
                 std::string who = gdlg_keys_.size() == 1 ? name : accounts_count((long long)gdlg_keys_.size());
                 dialog_text(who + "\n" + TR("Папка: ", "Folder: ") + g_export_folder_ + "\n\n" +
                             TR("Будет создана папка maFiles в формате Steam Desktop Authenticator — её можно положить рядом с SDA или импортировать обратно. "
-                               "Задайте ключ, чтобы зашифровать файлы, как в SDA. Без ключа любой, кто получит файлы, получит доступ к аккаунту.",
+                               "Задайте ключ, чтобы зашифровать файлы, как в SDA. Без ключа любой, кто получит файлы, сможет генерировать коды и подтверждать обмены, "
+                               "поэтому сессия входа в незашифрованную копию не попадает — после восстановления нужно будет один раз войти.",
                                "A maFiles folder in Steam Desktop Authenticator format is created — put it next to SDA or import it back. "
-                               "Set a passkey to encrypt the files like SDA does. Without it, anyone who gets the files gets the account."));
+                               "Set a passkey to encrypt the files like SDA does. Without it, anyone who gets the files can make codes and confirm trades, "
+                               "so the sign-in session is left out of an unencrypted copy — sign in once after restoring."));
                 field_label(TR("Ключ шифрования (необязательно)", "Passkey (optional)"));
                 plain_input("##ek1", g_buf1_, sizeof(g_buf1_), "", ImGuiInputTextFlags_Password, true);
                 field_label(TR("Ещё раз", "Repeat"));
@@ -1271,7 +1274,7 @@ void App::draw_guard_flow_dialog() {
             float bw = ImGui::GetContentRegionAvail().x;
             code_box(f.revocation, bw);
             if (pill_button(TR("Копировать код восстановления", "Copy the revocation code"), false, ImVec2(bw, S(34)), true, ICON_COPY)) {
-                os::clipboard_set(f.revocation);
+                os::clipboard_set_secret(f.revocation);
                 toast(TR("Скопировано", "Copied"));
             }
             ImGui::Dummy(ImVec2(0, S(4)));

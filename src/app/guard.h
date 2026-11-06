@@ -181,10 +181,12 @@ private:
         guard::Session session;
         guard::Account linking;   // Link: the new authenticator before finalisation
         std::string login;
+        bool own_code = false;    // sign-in confirmed with a code from our own shared_secret
     } pend_;
     std::vector<std::thread> old_flows_;
     void run_flow(std::function<void(int gen)> fn);
     void set_flow(FlowStep step, const std::string& msg, bool error = false);
+    void set_flow(int gen, FlowStep step, const std::string& msg, bool error = false);  // ignored for a stale flow
     bool flow_cancelled(int gen) const { return flow_cancel_ || flow_gen_ != gen || stop_; }
     void login_begin(const std::string& login, const std::string& password, int gen);
     void login_poll(int gen, int timeout_s);

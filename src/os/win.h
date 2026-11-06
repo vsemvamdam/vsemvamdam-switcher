@@ -80,6 +80,8 @@ std::string start_menu_programs();
 
 // ---------- Shell ----------
 bool clipboard_set(const std::string& text);
+// For codes and keys: kept out of Windows clipboard history (Win+V), cloud clipboard and clipboard monitors.
+bool clipboard_set_secret(const std::string& text);
 bool create_shortcut(const std::string& lnk_path, const std::string& target, const std::string& args,
                      const std::string& workdir, const std::string& icon_path, const std::string& description);
 // Resolves a .lnk to its target path ("" if not a shortcut).

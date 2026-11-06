@@ -110,7 +110,11 @@ os::HttpResponse community(const guard::Account& a, const std::string& method, c
 
 bool contains(const std::vector<int>& v, int x) { return std::find(v.begin(), v.end(), x) != v.end(); }
 
-std::string random_session_id() { return crypto::hex_encode(crypto::random_bytes(12)); }
+std::string random_session_id() {
+    crypto::Bytes b = crypto::random_bytes(12);
+    if (b.size() != 12) b = crypto::sha1(crypto::to_bytes(std::to_string(unix_now()) + std::to_string((uintptr_t)&b))), b.resize(12);
+    return crypto::hex_encode(b);
+}
 
 int64_t now_ms() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
@@ -429,7 +433,7 @@ bool Guard::save_locked(const Item& it) {
         return false;
     }
     fsx::mkdirs(dir());
-    ok = fsx::write_file(file_of(it.key), std::string(out.begin(), out.end()));
+    ok = fsx::write_file_atomic(file_of(it.key), std::string(out.begin(), out.end()));
     if (!ok) log::error("guard: cannot write " + file_of(it.key));
     return ok;
 }
@@ -446,7 +450,8 @@ void Guard::backup_file_locked(const std::string& key) {
     std::string bdir = fsx::join(dir(), "backup");
     fsx::mkdirs(bdir);
     std::string data;
-    if (fsx::read_file(f, data)) fsx::write_file(fsx::join(bdir, key + "-" + std::to_string(unix_now()) + ".vsguard"), data);
+    if (fsx::read_file(f, data))
+        fsx::write_file_atomic(fsx::join(bdir, key + "-" + std::to_string(unix_now()) + "-" + crypto::hex_encode(crypto::random_bytes(3)) + ".vsguard"), data);
 }
 
 std::string Guard::make_key(const guard::Account& a) const {
@@ -462,14 +467,16 @@ std::string Guard::rekey_locked(const std::string& old_key, uint64_t steamid) {
     if (it == items_.end() || !steamid) return old_key;
     std::string nk = std::to_string(steamid);
     if (nk == old_key) return old_key;
-    Item item = std::move(it->second);
-    items_.erase(it);
-    fsx::remove_file(file_of(old_key));
+    // never clobber another entry (or an unreadable file) under the new name without a copy
+    backup_file_locked(nk);
+    Item item = it->second;
     item.key = nk;
     item.acc.steamid = steamid;
     if (!item.acc.session.steamid) item.acc.session.steamid = steamid;
+    if (!save_locked(item)) return old_key;  // keep the old file and key if the new one can't be written
+    items_.erase(it);
     items_[nk] = std::move(item);
-    save_locked(items_[nk]);
+    fsx::remove_file(file_of(old_key));
     return nk;
 }
 
@@ -487,6 +494,7 @@ std::string Guard::add_or_update(guard::Account a, const std::string& source, bo
     if (was_new) {
         Item it;
         it.key = make_key(a);
+        backup_file_locked(it.key);  // a file that could not be read at start-up (e.g. other Windows user) is kept
         it.acc = std::move(a);
         it.added_at = unix_now();
         it.source = source;
@@ -494,9 +502,22 @@ std::string Guard::add_or_update(guard::Account a, const std::string& source, bo
         items_[key] = std::move(it);
     } else {
         Item& it = items_[key];
-        if (it.acc.shared_secret != a.shared_secret) backup_file_locked(key);
-        // keep a still-valid session when the imported file has none
-        if (a.session.refresh_token.empty() && !it.acc.session.refresh_token.empty() && it.acc.shared_secret == a.shared_secret) a.session = it.acc.session;
+        backup_file_locked(key);  // every replacement leaves a copy in guard\backup
+        if (it.acc.shared_secret == a.shared_secret) {
+            // same authenticator: an older or trimmed maFile must not erase what we already know
+            auto keep = [](std::string& dst, const std::string& old) { if (dst.empty()) dst = old; };
+            keep(a.identity_secret, it.acc.identity_secret);
+            keep(a.secret_1, it.acc.secret_1);
+            keep(a.revocation_code, it.acc.revocation_code);
+            keep(a.serial_number, it.acc.serial_number);
+            keep(a.uri, it.acc.uri);
+            keep(a.token_gid, it.acc.token_gid);
+            keep(a.device_id, it.acc.device_id);
+            if (!a.server_time) a.server_time = it.acc.server_time;
+            // keep a still-valid session when the imported file has none
+            if (a.session.refresh_token.empty() && !it.acc.session.refresh_token.empty()) a.session = it.acc.session;
+            if (it.acc.fully_enrolled) a.fully_enrolled = true;
+        }
         if (!a.steamid) a.steamid = it.acc.steamid;
         if (a.account_name.empty()) a.account_name = it.acc.account_name;
         it.acc = std::move(a);
@@ -505,7 +526,7 @@ std::string Guard::add_or_update(guard::Account a, const std::string& source, bo
         it.notified.clear();
         if (it.acc.steamid && starts_with(key, "acc-")) key = rekey_locked(key, it.acc.steamid);
     }
-    save_locked(items_[key]);
+    if (!save_locked(items_[key])) log::error("guard: could not save " + key);
     return key;
 }
 
@@ -563,6 +584,13 @@ ImportReport Guard::import_paths(const std::vector<std::string>& paths, const st
         } else if (fsx::is_file(p)) {
             files.push_back(p);
         }
+    }
+    // an encrypted maFile picked on its own is imported through its folder's manifest (once per folder)
+    for (auto& f : files) {
+        std::string head;
+        if (!fsx::read_file(f, head) || looks_like_json(head)) continue;
+        std::string d = fsx::parent(f);
+        if (fsx::is_file(fsx::join(d, "manifest.json"))) sda_dirs.push_back(d);
     }
     std::sort(sda_dirs.begin(), sda_dirs.end());
     sda_dirs.erase(std::unique(sda_dirs.begin(), sda_dirs.end()), sda_dirs.end());
@@ -629,20 +657,7 @@ ImportReport Guard::import_paths(const std::vector<std::string>& paths, const st
             continue;
         }
         if (!looks_like_json(text)) {
-            // encrypted maFile picked alone: look for its manifest next to it
-            std::string d = fsx::parent(f);
-            if (fsx::is_file(fsx::join(d, "manifest.json"))) {
-                auto sub = import_paths({d}, passkey, resolve);
-                rep.added += sub.added;
-                rep.updated += sub.updated;
-                rep.need_passkey |= sub.need_passkey;
-                rep.wrong_passkey |= sub.wrong_passkey;
-                for (auto& x : sub.retry) rep.retry.push_back(x);
-                for (auto& x : sub.errors) rep.errors.push_back(x);
-                for (auto& x : sub.keys) rep.keys.push_back(x);
-                handled.push_back(to_lower(f));
-                continue;
-            }
+            if (fsx::is_file(fsx::join(fsx::parent(f), "manifest.json"))) continue;  // handled with its folder above
             rep.errors.push_back(fsx::filename(f) + TR(": файл зашифрован — выберите всю папку maFiles вместе с manifest.json",
                                                          ": the file is encrypted — pick the whole maFiles folder with manifest.json"));
             continue;
@@ -673,16 +688,23 @@ bool Guard::export_sda(const std::vector<std::string>& keys, const std::string& 
         }
     }
     if (accs.empty()) { err = TR("Нечего экспортировать", "Nothing to export"); return false; }
+    auto empty_dir = [](const std::string& d) { return !fsx::exists(d) || (fsx::is_dir(d) && fsx::list_dir(d).empty()); };
     std::string target = fsx::join(folder, "maFiles");
-    if (iequals(fsx::filename(folder), "maFiles") && !fsx::exists(fsx::join(folder, "manifest.json"))) target = folder;
-    if (fsx::exists(fsx::join(target, "manifest.json"))) target = fsx::join(folder, "maFiles-vsemvamdam-" + std::to_string(unix_now()));
+    if (iequals(fsx::filename(folder), "maFiles") && empty_dir(folder)) target = folder;
+    // never write into a folder that already has files (an existing SDA install, an earlier backup)
+    if (!empty_dir(target)) target = fsx::join(folder, "maFiles-vsemvamdam-" + std::to_string(unix_now()));
+    if (!empty_dir(target)) { err = TR("Папка для копии уже существует", "The backup folder already exists"); return false; }
     if (!fsx::mkdirs(target)) { err = TR("Не удалось создать папку ", "Cannot create folder ") + target; return false; }
     json man = {{"encrypted", !passkey.empty()}, {"first_run", false}, {"entries", json::array()}, {"periodic_checking", false},
                 {"periodic_checking_interval", 5}, {"periodic_checking_checkall", false}, {"auto_confirm_market_transactions", false},
                 {"auto_confirm_trades", false}};
-    for (auto& a : accs) {
+    for (auto& a0 : accs) {
+        guard::Account a = a0;
+        // a refresh token signs in without the password: only encrypted backups carry the session
+        if (passkey.empty()) a.session.access_token.clear(), a.session.refresh_token.clear();
         std::string name = a.steamid ? std::to_string(a.steamid) : sanitize_filename(a.account_name);
         name += ".maFile";
+        if (fsx::exists(fsx::join(target, name))) name = crypto::hex_encode(crypto::random_bytes(4)) + "-" + name;
         std::string body = guard::to_mafile(a);
         json e = {{"filename", name}, {"steamid", a.steamid}, {"encryption_iv", nullptr}, {"encryption_salt", nullptr}};
         if (!passkey.empty()) {
@@ -720,7 +742,7 @@ void Guard::cache_icons(const std::vector<guard::Confirmation>& list) {
         std::string p = fsx::join(idir, crypto::hex_encode(crypto::sha1((const uint8_t*)c.icon.data(), c.icon.size())) + ".img");
         if (fsx::exists(p) || ++fetched > 30) continue;
         std::string body;
-        if (os::http_get(c.icon, body, nullptr, 8000) && body.size() > 64 && body.size() < 2 * 1024 * 1024) fsx::write_file(p, body);
+        if (os::http_get(c.icon, body, nullptr, 5000) && body.size() > 64 && body.size() < 2 * 1024 * 1024) fsx::write_file(p, body);
     }
 }
 
@@ -797,6 +819,10 @@ Guard::Sess Guard::ensure_session(const std::string& key, bool force, guard::Acc
         std::lock_guard<std::mutex> lk(mtx_);
         auto it = items_.find(key);
         if (it == items_.end()) return Sess::NeedLogin;
+        if (it->second.acc.session.refresh_token != a.session.refresh_token) {  // a new login landed meanwhile
+            out = it->second.acc;
+            return Sess::Ok;
+        }
         it->second.acc.session.access_token = access;
         if (!refresh.empty()) it->second.acc.session.refresh_token = refresh;
         if (!it->second.acc.session.steamid) it->second.acc.session.steamid = sid;
@@ -848,6 +874,7 @@ void Guard::do_fetch(const std::string& key, bool background) {
     };
     guard::Account a;
     Sess s = ensure_session(key, false, a);
+    if (stop_) return;
     if (s == Sess::NeedLogin) return fail(TR("Сессия Steam истекла — войдите заново", "The Steam session expired — sign in again"), true);
     if (s == Sess::NetError) return fail(TR("Нет связи со Steam", "Can't reach Steam"), false);
     guard::ConfList cl;
@@ -861,6 +888,7 @@ void Guard::do_fetch(const std::string& key, bool background) {
         // the access token may have been revoked early: get a fresh one and retry once
         if (ensure_session(key, true, a) != Sess::Ok) break;
     }
+    if (stop_) return;
     if (!cl.ok) {
         if (cl.needauth) return fail(TR("Сессия Steam истекла — войдите заново", "The Steam session expired — sign in again"), true);
         return fail(cl.message.empty() ? std::string(TR("Steam не отдал список подтверждений", "Steam didn't return the confirmations")) : cl.message, false);
@@ -1001,6 +1029,17 @@ void Guard::set_flow(FlowStep step, const std::string& msg, bool error) {
     emit({});
 }
 
+void Guard::set_flow(int gen, FlowStep step, const std::string& msg, bool error) {
+    {
+        std::lock_guard<std::mutex> lk(fmtx_);
+        if (flow_gen_ != gen) return;  // a cancelled flow must not overwrite the current one
+        fs_.step = step;
+        fs_.message = msg;
+        fs_.error = error;
+    }
+    emit({});
+}
+
 void Guard::run_flow(std::function<void(int)> fn) {
     int gen = ++flow_gen_;
     flow_cancel_ = false;
@@ -1010,7 +1049,7 @@ void Guard::run_flow(std::function<void(int)> fn) {
             fn(gen);
         } catch (const std::exception& e) {
             log::error(std::string("guard flow: ") + e.what());
-            if (flow_gen_ == gen) set_flow(FlowStep::Failed, std::string(TR("Внутренняя ошибка: ", "Internal error: ")) + e.what(), true);
+            set_flow(gen, FlowStep::Failed, std::string(TR("Внутренняя ошибка: ", "Internal error: ")) + e.what(), true);
         }
     });
 }
@@ -1019,15 +1058,9 @@ void Guard::flow_reset() {
     FlowState st = flow();
     flow_cancel_ = true;
     ++flow_gen_;
-    // an authenticator that was added but never activated is useless: drop it
-    if (st.kind == FlowKind::Link && st.step == FlowStep::NeedActivation && !st.key.empty()) {
-        std::lock_guard<std::mutex> lk(mtx_);
-        auto it = items_.find(st.key);
-        if (it != items_.end() && !it->second.acc.fully_enrolled) {
-            fsx::remove_file(file_of(st.key));
-            items_.erase(it);
-        }
-    }
+    // An added but not activated authenticator stays (marked "linking not finished"): Steam may have accepted
+    // the activation even if its answer never arrived, and then these secrets are the only way into the account.
+    (void)st;
     {
         std::lock_guard<std::mutex> lk(fmtx_);
         fs_ = FlowState{};
@@ -1090,16 +1123,18 @@ void Guard::login_begin(const std::string& login, const std::string& password, i
     std::string mod, ex;
     uint64_t ts = 0;
     if (!k.net_ok || k.http != 200 || k.eresult != 1 || !guard::pb_rsa_key_response(k.body, mod, ex, ts))
-        return set_flow(FlowStep::Failed, k.eresult == 9 ? std::string(TR("Аккаунт не найден", "Account not found")) : net_error_text(k), true);
-    crypto::Bytes enc = crypto::rsa_pkcs1_encrypt(mod, ex, crypto::to_bytes(password));
-    if (enc.empty()) return set_flow(FlowStep::Failed, TR("Не удалось зашифровать пароль", "Could not encrypt the password"), true);
+        return set_flow(gen, FlowStep::Failed, k.eresult == 9 ? std::string(TR("Аккаунт не найден", "Account not found")) : net_error_text(k), true);
+    crypto::Bytes pwb = crypto::to_bytes(password);
+    crypto::Bytes enc = crypto::rsa_pkcs1_encrypt(mod, ex, pwb);
+    crypto::wipe(pwb);
+    if (enc.empty()) return set_flow(gen, FlowStep::Failed, TR("Не удалось зашифровать пароль", "Could not encrypt the password"), true);
     Api b = call_pb("IAuthenticationService/BeginAuthSessionViaCredentials/v1",
                     guard::pb_begin_auth_request(login, crypto::base64_encode(enc), ts, kDeviceName), false);
     if (flow_cancelled(gen)) return;
     guard::BeginAuth ba;
     if (!b.net_ok || b.http != 200 || b.eresult != 1 || !guard::pb_begin_auth_response(b.body, ba)) {
         log::warn("guard: begin auth http=" + std::to_string(b.http) + " eresult=" + std::to_string(b.eresult));
-        return set_flow(FlowStep::Failed, net_error_text(b), true);
+        return set_flow(gen, FlowStep::Failed, net_error_text(b), true);
     }
     FlowKind kind;
     {
@@ -1125,17 +1160,23 @@ void Guard::login_begin(const std::string& login, const std::string& password, i
     const auto& al = ba.allowed;
     if (contains(al, guard::GuardNone)) return login_poll(gen, 30);
     if (contains(al, guard::GuardDeviceCode) && !secret.empty()) {
-        set_flow(FlowStep::Working, TR("Подтверждаю вход кодом Steam Guard…", "Confirming with the Steam Guard code…"));
+        set_flow(gen, FlowStep::Working, TR("Подтверждаю вход кодом Steam Guard…", "Confirming with the Steam Guard code…"));
         for (int attempt = 0; attempt < 2; ++attempt) {
             Api u = call_pb("IAuthenticationService/UpdateAuthSessionWithSteamGuardCode/v1",
                             guard::pb_update_code_request(ba.client_id, ba.steamid, guard::code_for_time(secret, now()), guard::GuardDeviceCode), false);
             if (flow_cancelled(gen)) return;
-            if (u.net_ok && u.http == 200 && (u.eresult == 1 || u.eresult == 29)) return login_poll(gen, 30);
+            if (u.net_ok && u.http == 200 && (u.eresult == 1 || u.eresult == 29)) {
+                {
+                    std::lock_guard<std::mutex> lk(fmtx_);
+                    if (flow_gen_ == gen) pend_.own_code = true;
+                }
+                return login_poll(gen, 30);
+            }
             if (u.eresult == 88 && attempt == 0) {
                 sync_time();
                 continue;
             }
-            return set_flow(FlowStep::Failed,
+            return set_flow(gen, FlowStep::Failed,
                             u.eresult == 88 ? std::string(TR("Код Steam Guard не подошёл. Проверьте время на компьютере и что maFile от этого аккаунта.",
                                                              "The Steam Guard code didn't match. Check the PC clock and that the maFile belongs to this account."))
                                             : net_error_text(u),
@@ -1144,7 +1185,7 @@ void Guard::login_begin(const std::string& login, const std::string& password, i
         return;
     }
     if (kind == FlowKind::Link && contains(al, guard::GuardDeviceCode))
-        return set_flow(FlowStep::Failed,
+        return set_flow(gen, FlowStep::Failed,
                         TR("На этом аккаунте уже включён мобильный аутентификатор Steam Guard. Чтобы пользоваться им здесь, импортируйте его maFile. "
                            "Либо сначала удалите аутентификатор в приложении Steam (или кодом восстановления R…), а затем привяжите заново.",
                            "This account already has a Steam Guard mobile authenticator. To use it here, import its maFile. "
@@ -1156,16 +1197,16 @@ void Guard::login_begin(const std::string& login, const std::string& password, i
             if (flow_gen_ != gen) return;
             fs_.hint = email_hint;
         }
-        return set_flow(FlowStep::NeedEmailCode, "");
+        return set_flow(gen, FlowStep::NeedEmailCode, "");
     }
-    if (contains(al, guard::GuardDeviceCode)) return set_flow(FlowStep::NeedDeviceCode, "");
+    if (contains(al, guard::GuardDeviceCode)) return set_flow(gen, FlowStep::NeedDeviceCode, "");
     if (contains(al, guard::GuardDeviceConfirmation) || contains(al, guard::GuardEmailConfirmation)) {
-        set_flow(FlowStep::WaitConfirmation, contains(al, guard::GuardDeviceConfirmation)
+        set_flow(gen, FlowStep::WaitConfirmation, contains(al, guard::GuardDeviceConfirmation)
                                                  ? TR("Подтвердите вход в мобильном приложении Steam", "Approve the sign-in in the Steam mobile app")
                                                  : TR("Откройте письмо от Steam и подтвердите вход по ссылке", "Open the e-mail from Steam and approve the sign-in"));
         return login_poll(gen, 180);
     }
-    set_flow(FlowStep::Failed, TR("Steam запросил неизвестный способ подтверждения входа", "Steam asked for an unknown confirmation method"), true);
+    set_flow(gen, FlowStep::Failed, TR("Steam запросил неизвестный способ подтверждения входа", "Steam asked for an unknown confirmation method"), true);
 }
 
 void Guard::flow_code(const std::string& code_in) {
@@ -1186,7 +1227,7 @@ void Guard::flow_code(const std::string& code_in) {
         if (flow_cancelled(gen)) return;
         if (u.net_ok && u.http == 200 && (u.eresult == 1 || u.eresult == 29)) return login_poll(gen, 30);
         if (u.eresult == 65 || u.eresult == 88) return set_flow(back, TR("Неверный код — проверьте и введите ещё раз", "Wrong code — check it and try again"), true);
-        set_flow(FlowStep::Failed, net_error_text(u), true);
+        set_flow(gen, FlowStep::Failed, net_error_text(u), true);
     });
 }
 
@@ -1202,14 +1243,14 @@ void Guard::login_poll(int gen, int timeout_s) {
         Api r = call_pb("IAuthenticationService/PollAuthSessionStatus/v1", guard::pb_poll_request(p.client_id, p.request_id), false);
         if (flow_cancelled(gen)) return;
         guard::PollResult pr;
-        if (!r.net_ok || r.http != 200 || r.eresult != 1 || !guard::pb_poll_response(r.body, pr)) return set_flow(FlowStep::Failed, net_error_text(r), true);
+        if (!r.net_ok || r.http != 200 || r.eresult != 1 || !guard::pb_poll_response(r.body, pr)) return set_flow(gen, FlowStep::Failed, net_error_text(r), true);
         if (pr.new_client_id) {
             std::lock_guard<std::mutex> lk(fmtx_);
             if (flow_gen_ == gen) pend_.client_id = pr.new_client_id;
         }
         if (!pr.refresh_token.empty()) return login_finish(pr, gen);
         if (std::chrono::steady_clock::now() > deadline)
-            return set_flow(FlowStep::Failed, TR("Время ожидания вышло — попробуйте ещё раз", "Timed out — please try again"), true);
+            return set_flow(gen, FlowStep::Failed, TR("Время ожидания вышло — попробуйте ещё раз", "Timed out — please try again"), true);
         int ms = (int)(std::clamp(p.interval, 1.0f, 10.0f) * 1000);
         for (int waited = 0; waited < ms; waited += 100) {
             if (flow_cancelled(gen)) return;
@@ -1244,11 +1285,14 @@ void Guard::login_finish(const guard::PollResult& pr, int gen) {
         {
             std::lock_guard<std::mutex> lk(mtx_);
             auto it = items_.find(key);
-            if (it == items_.end()) return set_flow(FlowStep::Failed, TR("Аккаунт удалён из списка", "The account was removed"), true);
-            if (it->second.acc.steamid && s.steamid && it->second.acc.steamid != s.steamid)
-                return set_flow(FlowStep::Failed, TR("Вы вошли в другой аккаунт, чем у этого аутентификатора", "You signed in to a different account than this authenticator's"), true);
+            if (it == items_.end()) return set_flow(gen, FlowStep::Failed, TR("Аккаунт удалён из списка", "The account was removed"), true);
+            bool other = (it->second.acc.steamid && s.steamid && it->second.acc.steamid != s.steamid) ||
+                         (!it->second.acc.steamid && !pr.account_name.empty() && !it->second.acc.account_name.empty() &&
+                          !iequals(pr.account_name, it->second.acc.account_name));
+            if (other)
+                return set_flow(gen, FlowStep::Failed, TR("Вы вошли в другой аккаунт, чем у этого аутентификатора", "You signed in to a different account than this authenticator's"), true);
             it->second.acc.session = s;
-            it->second.acc.fully_enrolled = true;
+            if (p.own_code) it->second.acc.fully_enrolled = true;  // Steam accepted a code from these secrets
             it->second.confs.needauth = false;
             it->second.confs.error.clear();
             if (!pr.account_name.empty()) it->second.acc.account_name = pr.account_name;
@@ -1260,7 +1304,7 @@ void Guard::login_finish(const guard::PollResult& pr, int gen) {
             if (flow_gen_ != gen) return;
             fs_.key = key;
         }
-        set_flow(FlowStep::Done, TR("Сессия обновлена — подтверждения снова работают", "Session refreshed — confirmations work again"));
+        set_flow(gen, FlowStep::Done, TR("Сессия обновлена — подтверждения снова работают", "Session refreshed — confirmations work again"));
         fetch(key, false);
         return;
     }
@@ -1277,7 +1321,7 @@ void Guard::login_finish(const guard::PollResult& pr, int gen) {
 }
 
 void Guard::link_add(int gen) {
-    set_flow(FlowStep::Working, TR("Подключаю аутентификатор…", "Adding the authenticator…"));
+    set_flow(gen, FlowStep::Working, TR("Подключаю аутентификатор…", "Adding the authenticator…"));
     Pending p;
     {
         std::lock_guard<std::mutex> lk(fmtx_);
@@ -1294,7 +1338,7 @@ void Guard::link_add(int gen) {
                        {"version", "2"}});
     if (flow_cancelled(gen)) return;
     guard::AddAuthResult ar;
-    if (!r.net_ok || r.http != 200 || !guard::parse_add_authenticator(r.body, ar)) return set_flow(FlowStep::Failed, net_error_text(r), true);
+    if (!r.net_ok || r.http != 200 || !guard::parse_add_authenticator(r.body, ar)) return set_flow(gen, FlowStep::Failed, net_error_text(r), true);
     switch (ar.status) {
         case 1: {
             guard::Account a = ar.account;
@@ -1315,19 +1359,19 @@ void Guard::link_add(int gen) {
                 fs_.hint = a.phone_number_hint;
             }
             emit({});
-            return set_flow(FlowStep::NeedActivation, "");
+            return set_flow(gen, FlowStep::NeedActivation, "");
         }
         case 2:
-            return set_flow(FlowStep::NeedPhone, "");
+            return set_flow(gen, FlowStep::NeedPhone, "");
         case 29:
-            return set_flow(FlowStep::Failed,
+            return set_flow(gen, FlowStep::Failed,
                             TR("На аккаунте уже есть мобильный аутентификатор. Импортируйте его maFile или сначала удалите аутентификатор в приложении Steam.",
                                "The account already has a mobile authenticator. Import its maFile or remove the authenticator in the Steam app first."),
                             true);
         case 84:
-            return set_flow(FlowStep::Failed, eresult_text(84), true);
+            return set_flow(gen, FlowStep::Failed, eresult_text(84), true);
         default:
-            return set_flow(FlowStep::Failed, std::string(TR("Steam отказал в привязке (статус ", "Steam refused to link (status ")) + std::to_string(ar.status) + ")", true);
+            return set_flow(gen, FlowStep::Failed, std::string(TR("Steam отказал в привязке (статус ", "Steam refused to link (status ")) + std::to_string(ar.status) + ")", true);
     }
 }
 
@@ -1359,9 +1403,9 @@ void Guard::flow_phone(const std::string& phone_in, const std::string& country_i
                 if (flow_gen_ != gen) return;
                 fs_.hint = email;
             }
-            return set_flow(FlowStep::NeedPhoneEmail, "");
+            return set_flow(gen, FlowStep::NeedPhoneEmail, "");
         }
-        set_flow(FlowStep::NeedPhone,
+        set_flow(gen, FlowStep::NeedPhone,
                  r.net_ok ? std::string(TR("Steam не принял номер. Укажите его целиком, с кодом страны: +7 999 123-45-67", "Steam didn't accept the number. Enter it in full with the country code: +1 555 123 4567"))
                           : net_error_text(r),
                  true);
@@ -1378,12 +1422,12 @@ void Guard::flow_phone_email_done() {
         }
         Api w = call_form(api_url("IPhoneService/IsAccountWaitingForEmailConfirmation/v1", p.session.access_token), {});
         bool awaiting = true;
-        if (!w.net_ok || !guard::parse_waiting_email(w.body, awaiting)) return set_flow(FlowStep::NeedPhoneEmail, net_error_text(w), true);
-        if (awaiting) return set_flow(FlowStep::NeedPhoneEmail, TR("Steam ещё ждёт подтверждения — нажмите ссылку в письме и повторите", "Steam is still waiting — click the link in the e-mail and retry"), true);
+        if (!w.net_ok || !guard::parse_waiting_email(w.body, awaiting)) return set_flow(gen, FlowStep::NeedPhoneEmail, net_error_text(w), true);
+        if (awaiting) return set_flow(gen, FlowStep::NeedPhoneEmail, TR("Steam ещё ждёт подтверждения — нажмите ссылку в письме и повторите", "Steam is still waiting — click the link in the e-mail and retry"), true);
         call_form(api_url("IPhoneService/SendPhoneVerificationCode/v1", p.session.access_token), {{"language", "0"}});
         for (int i = 0; i < 20 && !flow_cancelled(gen); ++i) std::this_thread::sleep_for(std::chrono::milliseconds(100));
         if (flow_cancelled(gen)) return;
-        set_flow(FlowStep::NeedPhoneSms, "");
+        set_flow(gen, FlowStep::NeedPhoneSms, "");
     });
 }
 
@@ -1399,7 +1443,7 @@ void Guard::flow_sms(const std::string& code) {
         Api r = call_form(api_url("IPhoneService/VerifyAccountPhoneWithCode/v1/", p.session.access_token), {{"code", c}});
         if (flow_cancelled(gen)) return;
         if (!r.net_ok || r.http != 200 || (r.eresult != 1 && r.eresult != 0))
-            return set_flow(FlowStep::NeedPhoneSms, r.eresult == 65 || r.eresult == 8 ? std::string(TR("Неверный код из SMS", "Wrong SMS code")) : net_error_text(r), true);
+            return set_flow(gen, FlowStep::NeedPhoneSms, r.eresult == 65 || r.eresult == 8 ? std::string(TR("Неверный код из SMS", "Wrong SMS code")) : net_error_text(r), true);
         link_add(gen);
     });
 }
@@ -1427,17 +1471,17 @@ void Guard::flow_finalize(const std::string& activation_in) {
                                {"validate_sms_code", "1"}});
             if (flow_cancelled(gen)) return;
             guard::FinalizeResult fr;
-            if (!r.net_ok || r.http != 200 || !guard::parse_finalize(r.body, fr)) return set_flow(FlowStep::NeedActivation, net_error_text(r), true);
-            if (fr.status == 89) return set_flow(FlowStep::NeedActivation, TR("Неверный код активации — проверьте и введите ещё раз", "Wrong activation code — check it and try again"), true);
+            if (!r.net_ok || r.http != 200 || !guard::parse_finalize(r.body, fr)) return set_flow(gen, FlowStep::NeedActivation, net_error_text(r), true);
+            if (fr.status == 89) return set_flow(gen, FlowStep::NeedActivation, TR("Неверный код активации — проверьте и введите ещё раз", "Wrong activation code — check it and try again"), true);
             if (fr.status == 88) {
                 if (resyncs++ < 2) {
                     sync_time();
                     t = now();
                     continue;
                 }
-                return set_flow(FlowStep::Failed, eresult_text(88), true);
+                return set_flow(gen, FlowStep::Failed, eresult_text(88), true);
             }
-            if (!fr.success) return set_flow(FlowStep::NeedActivation, std::string(TR("Steam не активировал аутентификатор (статус ", "Steam didn't activate it (status ")) + std::to_string(fr.status) + ")", true);
+            if (!fr.success) return set_flow(gen, FlowStep::NeedActivation, std::string(TR("Steam не активировал аутентификатор (статус ", "Steam didn't activate it (status ")) + std::to_string(fr.status) + ")", true);
             if (fr.want_more) {
                 t += guard::kCodePeriod;
                 continue;
@@ -1452,11 +1496,11 @@ void Guard::flow_finalize(const std::string& activation_in) {
                 }
             }
             log::info("guard: linked authenticator for " + p.linking.account_name);
-            set_flow(FlowStep::Done, "");
+            set_flow(gen, FlowStep::Done, "");
             fetch(key, false);
             return;
         }
-        set_flow(FlowStep::Failed, TR("Steam так и не принял коды — попробуйте позже", "Steam kept rejecting the codes — try again later"), true);
+        set_flow(gen, FlowStep::Failed, TR("Steam так и не принял коды — попробуйте позже", "Steam kept rejecting the codes — try again later"), true);
     });
 }
 

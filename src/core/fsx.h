@@ -18,6 +18,8 @@ bool is_file(const std::string& p);
 bool read_file(const std::string& p, std::string& out);
 // Atomic-ish write: write to temp file then rename over target.
 bool write_file(const std::string& p, const std::string& data);
+// Like write_file, but never falls back to truncating the target: on failure the old file stays intact.
+bool write_file_atomic(const std::string& p, const std::string& data);
 bool mkdirs(const std::string& p);
 bool remove_all(const std::string& p);
 bool remove_file(const std::string& p);

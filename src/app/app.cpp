@@ -164,6 +164,7 @@ void App::on_window_placement(int x, int y, int w, int h, bool maximized) {
 void App::shutdown() {
     if (worker_.joinable()) worker_.join();  // never exit in the middle of clearing/restoring a login
     if (steam_) steam_->stop_refresh();
+    if (g_sda_thread_.joinable()) g_sda_thread_.join();
     if (guard_) guard_->stop();
     store_.settings.last_platform = cur_;
     store_.save_settings();
@@ -435,7 +436,7 @@ bool App::execute_cli(const std::vector<std::string>& args, bool headless, std::
             }
             if (key.empty()) { err = TR("Нет аутентификатора для ", "No authenticator for ") + who; return true; }
             std::string code = guard_->code(key);
-            os::clipboard_set(code);
+            os::clipboard_set_secret(code);
             if (!headless) toast(std::string(TR("Код Steam Guard скопирован: ", "Steam Guard code copied: ")) + code);
             return true;
         }
